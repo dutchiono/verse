@@ -108,7 +108,7 @@ export function App() {
   }
 
   // ── Data loading ─────────────────────────────────────────────────────────
-  async function refreshAll() {
+  async function refreshAll(retryDelayMs?: number) {
     try {
       const [p, w, seq] = await Promise.all([
         api.listPools(),
@@ -119,7 +119,10 @@ export function App() {
       setWallets(w.wallets);
       setSequences(seq.sequences);
       if (!selectedPoolId && p.pools.length > 0) setSelectedPoolId(p.pools[0]!.id);
-    } catch {}
+    } catch {
+      // If initial load fails (e.g. server restarting), retry once after a delay
+      if (!retryDelayMs) setTimeout(() => void refreshAll(3000), 3000);
+    }
   }
 
   // ── WebSocket ────────────────────────────────────────────────────────────
