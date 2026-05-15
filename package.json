@@ -1,0 +1,41 @@
+{
+  "name": "trading-machine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun src/scripts/dev.ts",
+    "dev:nuke": "bun src/scripts/dev-nuke.ts",
+    "dev:server": "nodemon",
+    "dev:web": "cd web && bun run dev",
+    "import-wallet": "bun src/scripts/import-wallet.ts",
+    "list-wallets": "bun src/scripts/list-wallets.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@meteora-ag/dynamic-bonding-curve-sdk": "^1.5.7",
+    "@solana/spl-token": "^0.4.8",
+    "@solana/web3.js": "^1.95.3",
+    "bs58": "^6.0.0",
+    "dotenv": "^16.4.5",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "@types/ws": "^8.5.12",
+    "nodemon": "^3.1.9",
+    "typescript": "^5.6.0"
+  },
+  "nodemonConfig": {
+    "watch": ["src"],
+    "ext": "ts,json",
+    "ignore": [
+      "src/**/*.test.ts",
+      "**/*.tmp",
+      "src/scripts/dev-backend.cjs"
+    ],
+    "exec": "node ./src/scripts/dev-backend.cjs",
+    "delay": 300
+  }
+}

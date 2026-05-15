@@ -1,0 +1,17 @@
+# Default: normalize to LF on commit
+* text=auto eol=lf
+
+# Shell scripts must stay LF (run on Linux)
+*.sh text eol=lf
+
+# Windows-native scripts can use CRLF
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binaries
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary

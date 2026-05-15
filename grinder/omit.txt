@@ -1,0 +1,7 @@
+# omit.txt — wallets/words to exclude from curated.csv
+#
+# One entry per line:
+#   DUTCH           → omit the entire DUTCH pair (word match, case-insensitive)
+#   LARPMoAem6...   → omit a specific wallet address only
+#
+# Lines starting with # are ignored.
