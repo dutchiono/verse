@@ -241,7 +241,7 @@ export function App() {
         <nav className="top-nav">
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
           <button className={view === "guide" ? "active" : ""} onClick={() => setView("guide")}>Guide</button>
-          {!isVisitor && <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.length})</button>}
+          <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.length})</button>
           {isAdmin && <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}>Users</button>}
         </nav>
         <div className="top-right">
@@ -342,6 +342,7 @@ export function App() {
             onChanged={refreshAll}
             walletStatuses={walletStatuses}
             solBalances={solBalances}
+            isAdmin={isAdmin}
           />
         </main>
       )}

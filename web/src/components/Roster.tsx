@@ -12,11 +12,12 @@ interface Props {
   onChanged: () => Promise<void> | void;
   walletStatuses: Record<string, WalletStatus>;
   solBalances?: Record<string, number | null>;
+  isAdmin?: boolean;
 }
 
 type AddMode = "single" | "bulk";
 
-export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onSelectWallet, onChanged, walletStatuses, solBalances = {} }: Props) {
+export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onSelectWallet, onChanged, walletStatuses, solBalances = {}, isAdmin = false }: Props) {
   const [localWallets, setLocalWallets] = useState(wallets);
   const [showAdd, setShowAdd] = useState(false);
   const [addMode, setAddMode] = useState<AddMode>("single");
@@ -68,17 +69,21 @@ export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onS
             )}
           </div>
         </div>
-        <button className="ghost small" onClick={() => setShowAdd((v) => !v)}>
-          {showAdd ? "cancel" : "+ import"}
-        </button>
-        <button
-          type="button"
-          className="ghost small"
-          disabled={rosterWallets.length === 0 || activeCount === rosterWallets.length}
-          onClick={() => void patchWallets(rosterWallets.map((w) => w.name), { enabled: true })}
-        >
-          reset all on
-        </button>
+        {isAdmin && (
+          <>
+            <button className="ghost small" onClick={() => setShowAdd((v) => !v)}>
+              {showAdd ? "cancel" : "+ import"}
+            </button>
+            <button
+              type="button"
+              className="ghost small"
+              disabled={rosterWallets.length === 0 || activeCount === rosterWallets.length}
+              onClick={() => void patchWallets(rosterWallets.map((w) => w.name), { enabled: true })}
+            >
+              reset all on
+            </button>
+          </>
+        )}
       </div>
 
       {showAdd && (
@@ -115,8 +120,8 @@ export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onS
           controlWalletName={controlWalletName}
           selectedWalletName={selectedWalletName}
           onSelectWallet={onSelectWallet}
-          onTogglePair={(names, enabled) => void patchWallets(names, { enabled })}
-          onDeletePair={(names) => void removeWallets(names)}
+          onTogglePair={isAdmin ? (names, enabled) => void patchWallets(names, { enabled }) : undefined}
+          onDeletePair={isAdmin ? (names) => void removeWallets(names) : undefined}
         />
       )}
     </div>
