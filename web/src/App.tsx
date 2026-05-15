@@ -31,6 +31,7 @@ export function App() {
   const [walletStatuses, setWalletStatuses] = useState<Record<string, WalletStatus>>({});
   const [solBalances, setSolBalances] = useState<Record<string, number | null>>({});
   const [showAddPool, setShowAddPool] = useState(false);
+  const [showLoginModal, setShowLoginModal] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
 
   // ── Bootstrap auth check ─────────────────────────────────────────────────
@@ -74,9 +75,15 @@ export function App() {
   async function detectNoUsers() {
     try {
       const r = await api.bootstrap();
-      setAuthState(r.hasUsers ? "unauthenticated" : "no-users");
+      if (r.hasUsers) {
+        setAuthState("unauthenticated");
+        void refreshAll(); // load public data for visitor view
+      } else {
+        setAuthState("no-users");
+      }
     } catch {
       setAuthState("unauthenticated");
+      void refreshAll();
     }
   }
 
@@ -198,8 +205,8 @@ export function App() {
   // ── Render ───────────────────────────────────────────────────────────────
   if (authState === "loading") return <div className="bootstrap">connecting…</div>;
 
-  if (authState === "no-users" || authState === "unauthenticated") {
-    return <LockScreen noUsers={authState === "no-users"} onLogin={(token, user, admin) => {
+  if (authState === "no-users") {
+    return <LockScreen noUsers={true} onLogin={(token, user, admin) => {
       authToken.set(token);
       setUsername(user);
       setIsAdmin(admin);
@@ -208,6 +215,8 @@ export function App() {
       void refreshAll();
     }} />;
   }
+
+  const isVisitor = authState === "unauthenticated";
 
   const selectedPool = pools.find((p) => p.id === selectedPoolId) ?? null;
   const selectedSequence = sequences.find((s) => s.id === selectedSequenceId) ?? null;
@@ -226,7 +235,7 @@ export function App() {
         <nav className="top-nav">
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
           <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.length})</button>
-          <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}>Users</button>
+          {!isVisitor && <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}>Users</button>}
           <button className={view === "guide" ? "active" : ""} onClick={() => setView("guide")}>Guide</button>
         </nav>
         <div className="top-right">
@@ -249,12 +258,18 @@ export function App() {
                 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/>
             </svg>
           </a>
-          <span className="small muted" style={{ marginRight: 4 }}>{username}</span>
-          <span className="status">
-            <span className={`dot ${dotClass}`} />
-            {wsState}
-          </span>
-          <button className="ghost" onClick={() => void handleLogout()}>sign out</button>
+          {isVisitor ? (
+            <button className="ghost visitor-signin-btn" onClick={() => setShowLoginModal(true)}>Sign in</button>
+          ) : (
+            <>
+              <span className="small muted" style={{ marginRight: 4 }}>{username}</span>
+              <span className="status">
+                <span className={`dot ${dotClass}`} />
+                {wsState}
+              </span>
+              <button className="ghost" onClick={() => void handleLogout()}>sign out</button>
+            </>
+          )}
         </div>
       </header>
 
@@ -272,7 +287,7 @@ export function App() {
             <section className="rail-section">
               <div className="rail-head">
                 <span className="rail-title">POOLS</span>
-                <button className="ghost small" onClick={() => setShowAddPool(true)}>+ add</button>
+                {!isVisitor && <button className="ghost small" onClick={() => setShowAddPool(true)}>+ add</button>}
               </div>
               <PoolsList
                 pools={pools}
@@ -306,6 +321,7 @@ export function App() {
               walletStatuses={walletStatuses}
               solBalances={solBalances}
               onSolBalances={mergeSolBalances}
+              isVisitor={isVisitor}
             />
           </section>
         </main>
@@ -325,6 +341,23 @@ export function App() {
       )}
 
       {showAddPool && <AddPoolModal onClose={() => setShowAddPool(false)} onAdded={refreshAll} />}
+
+      {showLoginModal && (
+        <div className="visitor-modal-overlay" onClick={(e) => { if (e.target === e.currentTarget) setShowLoginModal(false); }}>
+          <div className="visitor-modal">
+            <button className="visitor-modal-close ghost small" onClick={() => setShowLoginModal(false)}>✕</button>
+            <LockScreen noUsers={false} onLogin={(token, user, admin) => {
+              authToken.set(token);
+              setUsername(user);
+              setIsAdmin(admin);
+              setAuthState("authenticated");
+              setShowLoginModal(false);
+              void api.getState().then(setSnapshot).catch(() => {});
+              void refreshAll();
+            }} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

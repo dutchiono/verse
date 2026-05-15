@@ -16,6 +16,7 @@ interface Props {
   solBalances?: Record<string, number | null>;
   onSolBalances?: (balances: Record<string, number | null>) => void;
   balanceCheckWallets?: WalletInfo[];
+  isVisitor?: boolean;
 }
 
 /** A single entry in the UI queue — one "word" = 1 or 2 wallet fires (prefix then suffix). */
@@ -126,6 +127,7 @@ export function SequencerPanel({
   solBalances = {},
   onSolBalances,
   balanceCheckWallets = [],
+  isVisitor = false,
 }: Props) {
   const [wordQueue, setWordQueue] = useState<WordStep[]>([]);
   const [action, setAction] = useState<SequencerAction>("buy-sell");
@@ -373,8 +375,8 @@ export function SequencerPanel({
       <div className="seq-arm-bar">
         <button
           className="seq-check-btn"
-          disabled={!canCheck}
-          title="slow sequential SOL balance check for visible roster wallets"
+          disabled={isVisitor || !canCheck}
+          title={isVisitor ? "sign in to use" : "slow sequential SOL balance check for visible roster wallets"}
           onClick={() => void checkRosterBalances()}
         >
           {checking ? "checking…" : "Check SOL"}
@@ -382,8 +384,8 @@ export function SequencerPanel({
 
         <button
           className={`seq-arm-btn ${armed ? "armed" : ""}`}
-          disabled={!canArm}
-          title={!controlWallet ? "LARP control wallet is not loaded" : undefined}
+          disabled={isVisitor || !canArm}
+          title={isVisitor ? "sign in to use" : !controlWallet ? "LARP control wallet is not loaded" : undefined}
           onClick={() => void doArm()}
         >
           {arming ? "arming…" : armed ? "✓ Armed" : "Arm"}
@@ -391,8 +393,8 @@ export function SequencerPanel({
 
         <button
           className={`seq-fire-btn ${firingAll ? "firing" : ""}`}
-          disabled={!canFire}
-          title={!armed ? "arm the current sentence first" : undefined}
+          disabled={isVisitor || !canFire}
+          title={isVisitor ? "sign in to use" : !armed ? "arm the current sentence first" : undefined}
           onClick={() => void fireSentence()}
         >
           {firingAll ? `${firingStep !== null ? firingStep + 1 : "…"} / ${fireCount(action, flatSteps)}` : "Fire"}
@@ -400,8 +402,8 @@ export function SequencerPanel({
 
         <button
           className="seq-cleanup-btn"
-          disabled={!canCleanup}
-          title={!controlWallet ? "LARP control wallet is not loaded" : undefined}
+          disabled={isVisitor || !canCleanup}
+          title={isVisitor ? "sign in to use" : !controlWallet ? "LARP control wallet is not loaded" : undefined}
           onClick={() => void doCleanup()}
         >
           {cleaning ? "cleaning…" : "Cleanup"}
@@ -554,7 +556,7 @@ export function SequencerPanel({
           onKeyDown={(e) => e.key === "Enter" && void saveSequence()}
           disabled={sequenceBusy}
         />
-        <button type="button" disabled={sequenceBusy || wordQueue.length === 0} onClick={() => void saveSequence()}>
+        <button type="button" disabled={isVisitor || sequenceBusy || wordQueue.length === 0} title={isVisitor ? "sign in to save sequences" : undefined} onClick={() => void saveSequence()}>
           {sequenceBusy ? "saving…" : selectedSequence ? "Update" : "Save sequence"}
         </button>
       </div>

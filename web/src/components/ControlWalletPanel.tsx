@@ -9,6 +9,7 @@ interface Props {
   onChanged: () => Promise<void> | void;
   onLog?: (text: string, level?: "info" | "warn" | "ok") => void;
   onSolBalances?: (balances: Record<string, number | null>) => void;
+  isVisitor?: boolean;
 }
 
 /**
@@ -16,7 +17,7 @@ interface Props {
  * and a withdraw form (exact amount or sweep). Visible only when the pool has
  * a control wallet set.
  */
-export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog, onSolBalances }: Props) {
+export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog, onSolBalances, isVisitor = false }: Props) {
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
   const [sweep, setSweep] = useState(false);
@@ -120,9 +121,9 @@ export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog
         <button
           type="button"
           className="ghost small"
-          disabled={checking}
+          disabled={isVisitor || checking}
           onClick={() => void checkBalance()}
-          title="explicit one-wallet SOL balance check for LARP"
+          title={isVisitor ? "sign in to use" : "explicit one-wallet SOL balance check for LARP"}
         >
           {checking ? "checking…" : "check SOL"}
         </button>
@@ -160,7 +161,8 @@ export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog
         </label>
         <button
           className="ctrl-send-btn"
-          disabled={busy || !destination.trim() || (!sweep && !amount)}
+          disabled={isVisitor || busy || !destination.trim() || (!sweep && !amount)}
+          title={isVisitor ? "sign in to use" : undefined}
           onClick={() => void submit()}
         >
           {busy ? "sending…" : "Withdraw"}

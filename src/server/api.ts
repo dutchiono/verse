@@ -300,6 +300,17 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     return json({ hasUsers: users.count() > 0 });
   }
 
+  // ── Public read-only endpoints (no auth required) ────────────────────────
+  if (path === "/api/wallets" && method === "GET") {
+    return json({ wallets: session.listPublic() });
+  }
+  if (path === "/api/pools" && method === "GET") {
+    return json({ pools: pools.list().map(poolView) });
+  }
+  if (path === "/api/sequences" && method === "GET") {
+    return json({ sequences: sequences.list() });
+  }
+
   // First-user bootstrap: allow POST /api/users with no auth if no users exist
   const isBootstrap = path === "/api/users" && method === "POST" && users.count() === 0;
 

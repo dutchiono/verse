@@ -18,6 +18,7 @@ interface Props {
   walletStatuses?: Record<string, WalletStatus>;
   solBalances?: Record<string, number | null>;
   onSolBalances?: (balances: Record<string, number | null>) => void;
+  isVisitor?: boolean;
 }
 
 export function PoolDetail({
@@ -32,6 +33,7 @@ export function PoolDetail({
   walletStatuses = {},
   solBalances = {},
   onSolBalances,
+  isVisitor = false,
 }: Props) {
   const [token, setToken] = useState<TokenInfo | null>(null);
   const [tokenErr, setTokenErr] = useState<string | null>(null);
@@ -97,6 +99,7 @@ export function PoolDetail({
           onChanged={onChanged}
           onLog={onLog}
           onSolBalances={onSolBalances}
+          isVisitor={isVisitor}
         />
       )}
 
@@ -113,6 +116,7 @@ export function PoolDetail({
             solBalances={solBalances}
             onSolBalances={onSolBalances}
             balanceCheckWallets={actionWallets}
+            isVisitor={isVisitor}
           />
         ) : (
           <div className="muted small" style={{ padding: "1rem" }}>Select a pool to use the sequencer.</div>
