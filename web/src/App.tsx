@@ -234,9 +234,9 @@ export function App() {
         <div className="brand">Verse</div>
         <nav className="top-nav">
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
-          <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.length})</button>
-          {!isVisitor && <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}>Users</button>}
           <button className={view === "guide" ? "active" : ""} onClick={() => setView("guide")}>Guide</button>
+          {isAdmin && <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.length})</button>}
+          {isAdmin && <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}>Users</button>}
         </nav>
         <div className="top-right">
           <a
