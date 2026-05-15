@@ -42,7 +42,9 @@ export function App() {
     const onUnauthorized = () => {
       setAuthState("unauthenticated");
       setUsername(null);
+      setIsAdmin(false);
       clearAppState();
+      void refreshAll(); // reload public data so visitors still see the word picker
     };
     window.addEventListener("verse-unauthorized", onUnauthorized);
     return () => window.removeEventListener("verse-unauthorized", onUnauthorized);
@@ -95,6 +97,7 @@ export function App() {
     setAuthState("unauthenticated");
     clearAppState();
     wsRef.current?.close();
+    void refreshAll(); // reload public data so visitor word picker stays populated
   }
 
   function clearAppState() {
