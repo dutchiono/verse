@@ -9,6 +9,26 @@ export function GuidePanel() {
 
       <div className="guide-sections">
 
+        {/* ── Wallets ── */}
+        <section className="guide-section">
+          <h2>Wallets</h2>
+          <p>
+            Verse uses <strong>vanity wallet pairs</strong>. Each pair is two Solana wallets whose
+            addresses spell out a word — one wallet starts with the word (<code>BULL…</code>) and
+            one ends with it (<code>…BULL</code>). Together they form one <em>word</em> in a sentence.
+          </p>
+          <p>
+            The admin imports wallets through the <strong>Roster</strong> tab using a CSV produced
+            by the grinder. Private keys are encrypted on the server and never leave it — they are
+            not stored in git, not visible in the UI, and not transmitted to your browser.
+          </p>
+          <p>
+            You also need one <strong>control wallet</strong> — a regular Solana wallet you already
+            own. It acts as the bank: you fund it with SOL, ARM distributes that SOL to the
+            sentence wallets, and Cleanup drains it all back when you're done.
+          </p>
+        </section>
+
         {/* ── The Sentence ── */}
         <section className="guide-section">
           <h2>The Sentence</h2>
@@ -71,8 +91,7 @@ export function GuidePanel() {
         <section className="guide-section">
           <h2>The Control Wallet</h2>
           <p>
-            The <strong>control wallet</strong> (labelled <code>LARP</code> on this instance) is the
-            bank for your sentence. All SOL flows through it:
+            The <strong>control wallet</strong> is the bank for your sentence. All SOL flows through it:
           </p>
           <ul className="guide-list">
             <li>You fund it before running ARM.</li>

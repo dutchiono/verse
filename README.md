@@ -22,6 +22,39 @@ Read the in-app **Guide** tab before firing anything real.
 
 ---
 
+## Wallets
+
+Verse uses **vanity wallet pairs** — two Solana wallets whose addresses spell out a word.
+A *prefix* wallet starts with the word (`BULL…`) and a *suffix* wallet ends with it (`…BULL`).
+Together they form one step in a sentence.
+
+**Private keys never leave your server.** They are stored in `config/wallets.encrypted.json`
+using AES-256-GCM encryption (scrypt KDF). That file is gitignored — it is never committed
+and never touches GitHub.
+
+### Importing wallets
+
+Wallets are imported through the **Roster** tab (admin only):
+
+1. Produce a `curated.csv` from the grinder (see Grinder tools below).
+2. Open Roster → **Bulk import** → paste the CSV content.
+3. Enter your vault password to encrypt and save.
+
+The CSV format the grinder outputs:
+```
+Word,Type,Short Wallet,Wallet Address,Private Key,Source File
+BULL,Prefix,BULLab,BULL...,<base58-private-key>,bull-prefix.json
+BULL,Suffix,xyzBULL,...BULL,<base58-private-key>,bull-suffix.json
+```
+
+### Grinding vanity wallets
+
+Use a GPU vanity grinder (e.g. [Vanity-SOL](https://github.com/something/vanity-sol) or similar)
+to generate wallet `.json` files, then run the scripts in `grinder/` to manage and curate them.
+See the Grinder tools section below.
+
+---
+
 ## Setup
 
 **Requirements:** [Bun](https://bun.sh) 1.1+, Node 22+, a [Helius](https://helius.dev) API key.
