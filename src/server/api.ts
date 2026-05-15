@@ -310,6 +310,16 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
   if (path === "/api/sequences" && method === "GET") {
     return json({ sequences: sequences.list() });
   }
+  const tokenMatch = path.match(/^\/api\/token\/([^/]+)$/);
+  if (tokenMatch && method === "GET") {
+    const mint = decodeURIComponent(tokenMatch[1]!);
+    try {
+      const info = await ctx.tokenInfo.get(mint);
+      return json(info);
+    } catch (e) {
+      return err((e as Error).message, 502);
+    }
+  }
 
   // First-user bootstrap: allow POST /api/users with no auth if no users exist
   const isBootstrap = path === "/api/users" && method === "POST" && users.count() === 0;
@@ -925,17 +935,6 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
         slippageBps: slippage,
       });
       return json({ ok: true, signature });
-    } catch (e) {
-      return err((e as Error).message, 502);
-    }
-  }
-
-  const tokenMatch = path.match(/^\/api\/token\/([^/]+)$/);
-  if (tokenMatch && method === "GET") {
-    const mint = decodeURIComponent(tokenMatch[1]!);
-    try {
-      const info = await ctx.tokenInfo.get(mint);
-      return json(info);
     } catch (e) {
       return err((e as Error).message, 502);
     }
