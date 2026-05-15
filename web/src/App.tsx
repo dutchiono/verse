@@ -19,6 +19,7 @@ export function App() {
   const [authState, setAuthState] = useState<AuthState>("loading");
   const [username, setUsername] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [userControlWallet, setUserControlWallet] = useState<string | null>(null);
   const [snapshot, setSnapshot] = useState<SessionSnapshot | null>(null);
   const [wsState, setWsState] = useState<WsState>("idle");
   const [view, setView] = useState<View>("dashboard");
@@ -43,6 +44,7 @@ export function App() {
       setAuthState("unauthenticated");
       setUsername(null);
       setIsAdmin(false);
+      setUserControlWallet(null);
       clearAppState();
       void refreshAll(); // reload public data so visitors still see the word picker
     };
@@ -65,6 +67,7 @@ export function App() {
       }
       setUsername(me.username);
       setIsAdmin(Boolean(me.isAdmin));
+      setUserControlWallet(me.controlWalletName ?? null);
       setAuthState("authenticated");
       void api.getState().then(setSnapshot).catch(() => {});
       void refreshAll();
@@ -89,11 +92,20 @@ export function App() {
     }
   }
 
+  // Fetch the logged-in user's full profile (including controlWalletName) and sync state.
+  async function refreshMe() {
+    try {
+      const me = await api.me();
+      if (me.authenticated) setUserControlWallet(me.controlWalletName ?? null);
+    } catch {}
+  }
+
   async function handleLogout() {
     try { await api.logout(); } catch { /* ignore */ }
     authToken.clear();
     setUsername(null);
     setIsAdmin(false);
+    setUserControlWallet(null);
     setAuthState("unauthenticated");
     clearAppState();
     wsRef.current?.close();
@@ -217,6 +229,7 @@ export function App() {
       setUsername(user);
       setIsAdmin(admin);
       setAuthState("authenticated");
+      void refreshMe();
       void api.getState().then(setSnapshot).catch(() => {});
       void refreshAll();
     }} />;
@@ -285,7 +298,12 @@ export function App() {
         </main>
       ) : view === "users" ? (
         <main className="roster-view">
-          <UsersPanel currentUsername={username!} isAdmin={isAdmin} />
+          <UsersPanel
+            currentUsername={username!}
+            isAdmin={isAdmin}
+            wallets={wallets}
+            onControlWalletChanged={refreshMe}
+          />
         </main>
       ) : view === "dashboard" ? (
         <main className="dashboard">
@@ -328,6 +346,7 @@ export function App() {
               solBalances={solBalances}
               onSolBalances={mergeSolBalances}
               isVisitor={isVisitor}
+              userControlWallet={userControlWallet}
             />
           </section>
         </main>
@@ -359,6 +378,7 @@ export function App() {
               setIsAdmin(admin);
               setAuthState("authenticated");
               setShowLoginModal(false);
+              void refreshMe();
               void api.getState().then(setSnapshot).catch(() => {});
               void refreshAll();
             }} />

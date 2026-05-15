@@ -294,7 +294,8 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
   if (path === "/api/auth/me" && method === "GET") {
     const authed = getAuthedUser(req);
     if (!authed) return json({ authenticated: false });
-    return json({ authenticated: true, username: authed.username, role: authed.role, isAdmin: authed.isAdmin });
+    const user = users.get(authed.username);
+    return json({ authenticated: true, username: authed.username, role: authed.role, isAdmin: authed.isAdmin, controlWalletName: user?.controlWalletName ?? null });
   }
   if (path === "/api/auth/bootstrap" && method === "GET") {
     return json({ hasUsers: users.count() > 0 });
@@ -375,6 +376,15 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
       await users.changePassword(name, newPassword);
       return json({ ok: true });
     }
+  }
+
+  const userControlWalletMatch = path.match(/^\/api\/users\/([^/]+)\/control-wallet$/);
+  if (userControlWalletMatch && method === "PUT") {
+    requireAdmin(authedUser);
+    const name = decodeURIComponent(userControlWalletMatch[1]!);
+    const { walletName } = await parseBody<{ walletName?: string | null }>(req);
+    users.setControlWallet(name, walletName ?? null);
+    return json({ ok: true });
   }
 
   // --- Session ---

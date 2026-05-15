@@ -1,18 +1,22 @@
 import { useEffect, useState } from "react";
 import { api } from "../api";
+import type { WalletInfo } from "../types";
 
 interface UserRow {
   username: string;
   createdAt: number;
   role?: "admin" | "operator";
+  controlWalletName?: string;
 }
 
 interface Props {
   currentUsername: string;
   isAdmin: boolean;
+  wallets?: WalletInfo[];
+  onControlWalletChanged?: () => void;
 }
 
-export function UsersPanel({ currentUsername, isAdmin }: Props) {
+export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWalletChanged }: Props) {
   const [userList, setUserList] = useState<UserRow[]>([]);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -22,6 +26,10 @@ export function UsersPanel({ currentUsername, isAdmin }: Props) {
   const [newUser, setNewUser] = useState("");
   const [newPass, setNewPass] = useState("");
   const [newPass2, setNewPass2] = useState("");
+
+  // Control wallet assignment (admin)
+  const [cwTarget, setCwTarget] = useState<string | null>(null); // username being edited
+  const [cwValue, setCwValue] = useState("");
 
   // Change-password form
   const [cpTarget, setCpTarget] = useState("");
@@ -74,6 +82,17 @@ export function UsersPanel({ currentUsername, isAdmin }: Props) {
     } catch (e) { setErr((e as Error).message); }
   }
 
+  async function saveControlWallet(username: string) {
+    setErr(null);
+    try {
+      await api.setUserControlWallet(username, cwValue || null);
+      setCwTarget(null);
+      flash(`control wallet ${cwValue ? `set to "${cwValue}"` : "cleared"} for ${username}`);
+      await load();
+      onControlWalletChanged?.();
+    } catch (e) { setErr((e as Error).message); }
+  }
+
   async function changePassword(e: React.FormEvent) {
     e.preventDefault();
     setErr(null);
@@ -109,13 +128,42 @@ export function UsersPanel({ currentUsername, isAdmin }: Props) {
         <div className="users-list">
           {userList.length === 0 && <div className="muted small">no users</div>}
           {userList.map(u => (
-            <div key={u.username} className="users-row">
+            <div key={u.username} className="users-row" style={{ flexWrap: "wrap", gap: 4 }}>
               <span className="users-name">{u.username}</span>
               {u.username === currentUsername && (
-                <span className="small muted" style={{ marginLeft: 6 }}>(you)</span>
+                <span className="small muted" style={{ marginLeft: 4 }}>(you)</span>
               )}
               <span className="users-spacer" />
               <span className="small muted">{u.role ?? "operator"} · {new Date(u.createdAt).toLocaleDateString()}</span>
+
+              {/* Control wallet */}
+              {cwTarget === u.username ? (
+                <>
+                  <select
+                    className="users-input"
+                    style={{ maxWidth: 160 }}
+                    value={cwValue}
+                    onChange={e => setCwValue(e.target.value)}
+                    autoFocus
+                  >
+                    <option value="">— none —</option>
+                    {wallets.map(w => (
+                      <option key={w.name} value={w.name}>{w.label || w.name} ({w.name})</option>
+                    ))}
+                  </select>
+                  <button className="ghost small" onClick={() => void saveControlWallet(u.username)}>save</button>
+                  <button className="ghost small" onClick={() => setCwTarget(null)}>cancel</button>
+                </>
+              ) : (
+                <button
+                  className="ghost small"
+                  title="assign control wallet"
+                  onClick={() => { setCwTarget(u.username); setCwValue(u.controlWalletName ?? ""); }}
+                >
+                  {u.controlWalletName ? `ctrl: ${u.controlWalletName}` : "ctrl: —"}
+                </button>
+              )}
+
               {u.username !== currentUsername && (
                 <button
                   className="ghost small danger"

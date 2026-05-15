@@ -13,6 +13,7 @@ export interface PublicUser {
   username: string;
   createdAt: number;
   role: UserRole;
+  controlWalletName?: string;
 }
 
 interface UserRecord extends PublicUser {
@@ -35,6 +36,7 @@ class UsersStore {
         createdAt: Number(u.createdAt ?? Date.now()),
         passwordHash: String(u.passwordHash ?? ""),
         role: (u.role === "admin" ? "admin" : "operator") as UserRole,
+        controlWalletName: u.controlWalletName ? String(u.controlWalletName) : undefined,
       })).filter((u: UserRecord) => Boolean(u.username) && Boolean(u.passwordHash));
       this.ensureAdminInvariant();
     } catch {
@@ -61,7 +63,7 @@ class UsersStore {
   }
 
   list(): PublicUser[] {
-    return this.users.map(({ username, createdAt, role }) => ({ username, createdAt, role }));
+    return this.users.map(({ username, createdAt, role, controlWalletName }) => ({ username, createdAt, role, controlWalletName }));
   }
 
   count(): number {
@@ -75,7 +77,15 @@ class UsersStore {
   get(username: string): PublicUser | null {
     const user = this.users.find((u) => u.username.toLowerCase() === username.toLowerCase().trim());
     if (!user) return null;
-    return { username: user.username, createdAt: user.createdAt, role: user.role };
+    return { username: user.username, createdAt: user.createdAt, role: user.role, controlWalletName: user.controlWalletName };
+  }
+
+  setControlWallet(username: string, walletName: string | null): void {
+    const user = this.users.find((u) => u.username.toLowerCase() === username.toLowerCase().trim());
+    if (!user) throw new Error(`user "${username}" not found`);
+    if (walletName) user.controlWalletName = walletName;
+    else delete user.controlWalletName;
+    this.save();
   }
 
   isAdmin(username: string): boolean {

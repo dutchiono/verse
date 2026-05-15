@@ -19,6 +19,7 @@ interface Props {
   solBalances?: Record<string, number | null>;
   onSolBalances?: (balances: Record<string, number | null>) => void;
   isVisitor?: boolean;
+  userControlWallet?: string | null;
 }
 
 export function PoolDetail({
@@ -34,11 +35,14 @@ export function PoolDetail({
   solBalances = {},
   onSolBalances,
   isVisitor = false,
+  userControlWallet = null,
 }: Props) {
   const [token, setToken] = useState<TokenInfo | null>(null);
   const [tokenErr, setTokenErr] = useState<string | null>(null);
   const controlWalletName = pool?.control_wallet_name ?? null;
-  const actionWallets = controlWalletName ? wallets.filter((w) => w.name !== controlWalletName) : wallets;
+  // User's personal control wallet takes precedence over the pool default.
+  const effectiveControlWallet = userControlWallet ?? controlWalletName;
+  const actionWallets = effectiveControlWallet ? wallets.filter((w) => w.name !== effectiveControlWallet) : wallets;
 
   useEffect(() => {
     if (!pool) { setToken(null); setTokenErr(null); return; }
@@ -95,7 +99,8 @@ export function PoolDetail({
         <ControlWalletPanel
           pool={pool}
           wallets={wallets}
-          solBalance={controlWalletName ? solBalances[controlWalletName] : null}
+          effectiveControlWallet={effectiveControlWallet}
+          solBalance={effectiveControlWallet ? solBalances[effectiveControlWallet] : null}
           onChanged={onChanged}
           onLog={onLog}
           isVisitor={isVisitor}
@@ -114,6 +119,7 @@ export function PoolDetail({
             walletStatuses={walletStatuses}
             solBalances={solBalances}
             onSolBalances={onSolBalances}
+            effectiveControlWallet={effectiveControlWallet}
             balanceCheckWallets={wallets}
             isVisitor={isVisitor}
           />

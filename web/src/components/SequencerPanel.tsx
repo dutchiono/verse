@@ -16,6 +16,7 @@ interface Props {
   solBalances?: Record<string, number | null>;
   onSolBalances?: (balances: Record<string, number | null>) => void;
   balanceCheckWallets?: WalletInfo[];
+  effectiveControlWallet?: string | null;
   isVisitor?: boolean;
 }
 
@@ -127,12 +128,13 @@ export function SequencerPanel({
   solBalances = {},
   onSolBalances,
   balanceCheckWallets = [],
+  effectiveControlWallet = null,
   isVisitor = false,
 }: Props) {
   const [wordQueue, setWordQueue] = useState<WordStep[]>([]);
   const [action, setAction] = useState<SequencerAction>("buy-sell");
   const [solAmount, setSolAmount] = useState(0.001);
-  const controlWallet = pool.control_wallet_name ?? "";
+  const controlWallet = effectiveControlWallet ?? pool.control_wallet_name ?? "";
   const controlWalletInfo = wallets.find((w) => w.name === controlWallet) ?? null;
   const controlLabel = controlWalletInfo?.label?.trim() || null;
   const [dirty, setDirty] = useState(false);

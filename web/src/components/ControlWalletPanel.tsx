@@ -5,6 +5,7 @@ import type { PoolView, WalletInfo } from "../types";
 interface Props {
   pool: PoolView;
   wallets: WalletInfo[];
+  effectiveControlWallet?: string | null; // user's personal wallet overrides pool default
   solBalance: number | null | undefined;
   onChanged: () => Promise<void> | void;
   onLog?: (text: string, level?: "info" | "warn" | "ok") => void;
@@ -16,7 +17,7 @@ interface Props {
  * and a withdraw form (exact amount or sweep). Visible only when the pool has
  * a control wallet set.
  */
-export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog, isVisitor = false }: Props) {
+export function ControlWalletPanel({ pool, wallets, effectiveControlWallet, solBalance, onChanged, onLog, isVisitor = false }: Props) {
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
   const [sweep, setSweep] = useState(false);
@@ -25,7 +26,7 @@ export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog
   const [lastSig, setLastSig] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const ctrlName = pool.control_wallet_name;
+  const ctrlName = effectiveControlWallet ?? pool.control_wallet_name;
   const ctrl = ctrlName ? wallets.find((w) => w.name === ctrlName) : undefined;
 
   if (!ctrlName) return null;

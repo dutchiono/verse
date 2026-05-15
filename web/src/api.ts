@@ -51,7 +51,7 @@ export const api = {
       method: "POST", body: JSON.stringify({ username, password }),
     }),
   logout: () => req<{ ok: true }>("/api/auth/logout", { method: "POST" }),
-  me: () => req<{ authenticated: boolean; username?: string; role?: UserRole; isAdmin?: boolean }>("/api/auth/me"),
+  me: () => req<{ authenticated: boolean; username?: string; role?: UserRole; isAdmin?: boolean; controlWalletName?: string | null }>("/api/auth/me"),
   bootstrap: () => req<{ hasUsers: boolean }>("/api/auth/bootstrap"),
 
   // --- Users ---
@@ -65,6 +65,10 @@ export const api = {
   changeUserPassword: (username: string, newPassword: string) =>
     req<{ ok: true }>(`/api/users/${encodeURIComponent(username)}`, {
       method: "PUT", body: JSON.stringify({ newPassword }),
+    }),
+  setUserControlWallet: (username: string, walletName: string | null) =>
+    req<{ ok: true }>(`/api/users/${encodeURIComponent(username)}/control-wallet`, {
+      method: "PUT", body: JSON.stringify({ walletName }),
     }),
 
   getState: () => req<SessionSnapshot>("/api/state"),
