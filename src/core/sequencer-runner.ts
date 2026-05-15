@@ -38,8 +38,11 @@ export interface CleanupStepResult {
 const log = makeLogger("sequencer");
 const ARM_SOL_PER_WALLET = 0.03;
 const ARM_FEE_BUFFER_LAMPORTS = 100_000;
-const CLEANUP_WALLET_INTERVAL_MS = 315;
-const CLEANUP_RATE_LIMIT_PAUSE_MS = 11_000;
+const ARM_BALANCE_CHECK_DELAY_MS = 300;   // between getBalance calls during ARM
+const ARM_TRANSFER_DELAY_MS = 800;        // between SOL top-up transfers during ARM
+const ARM_RETRY_ATTEMPTS = 3;             // retries on rate-limited transfer
+const CLEANUP_WALLET_INTERVAL_MS = 1_000; // min gap between cleanup wallets (was 315)
+const RATE_LIMIT_PAUSE_MS = 12_000;       // pause on any 429 before retry
 
 export interface StepEvent {
   poolId: string;
@@ -259,7 +262,8 @@ export class SequencerRunner extends EventEmitter {
     const deficits: Array<{ walletName: string; currentLamports: number; deficitLamports: number }> = [];
     const results: ArmStepResult[] = [];
 
-    for (const walletName of uniqueWallets) {
+    for (let i = 0; i < uniqueWallets.length; i++) {
+      const walletName = uniqueWallets[i]!;
       onProgress?.({ walletName, status: "arming" });
       const destKp = this.getKeypair(walletName);
       if (!destKp) {
@@ -268,12 +272,13 @@ export class SequencerRunner extends EventEmitter {
         onProgress?.({ walletName, status: "error", error: result.error });
         continue;
       }
-      const currentLamports = await this.conn.getBalance(destKp.publicKey, "confirmed");
+      const currentLamports = await getBalanceWithRateLimitRetry(this.conn, destKp.publicKey);
       deficits.push({
         walletName,
         currentLamports,
         deficitLamports: Math.max(0, targetLamports - currentLamports),
       });
+      if (i < uniqueWallets.length - 1) await sleep(ARM_BALANCE_CHECK_DELAY_MS);
     }
 
     const totalLamports = deficits.reduce((sum, x) => sum + x.deficitLamports, 0);
@@ -288,7 +293,8 @@ export class SequencerRunner extends EventEmitter {
       );
     }
 
-    for (const { walletName, currentLamports, deficitLamports } of deficits) {
+    for (let i = 0; i < deficits.length; i++) {
+      const { walletName, currentLamports, deficitLamports } = deficits[i]!;
       const destKp = this.getKeypair(walletName);
       if (!destKp) continue;
       if (deficitLamports <= 0) {
@@ -297,18 +303,33 @@ export class SequencerRunner extends EventEmitter {
         onProgress?.({ walletName, status: "armed", lamports: 0, balanceLamports: currentLamports });
         continue;
       }
-      try {
-        log.info("arm: topping up SOL", { to: walletName, lamports: deficitLamports });
-        const sig = await transferSol(this.conn, controlKp, destKp.publicKey, deficitLamports);
-        const balanceLamports = currentLamports + deficitLamports;
-        const result = { walletName, ok: true, sig, lamports: deficitLamports, balanceLamports } satisfies ArmStepResult;
-        results.push(result);
-        onProgress?.({ walletName, status: "armed", sig, lamports: deficitLamports, balanceLamports });
-      } catch (e) {
-        const result = { walletName, ok: false, error: (e as Error).message } satisfies ArmStepResult;
-        results.push(result);
-        onProgress?.({ walletName, status: "error", error: result.error });
+      let lastError = "";
+      let succeeded = false;
+      for (let attempt = 0; attempt < ARM_RETRY_ATTEMPTS; attempt++) {
+        try {
+          if (attempt > 0) {
+            log.info("arm: retrying transfer after rate limit", { to: walletName, attempt });
+            await sleep(RATE_LIMIT_PAUSE_MS);
+          }
+          log.info("arm: topping up SOL", { to: walletName, lamports: deficitLamports });
+          const sig = await transferSol(this.conn, controlKp, destKp.publicKey, deficitLamports);
+          const balanceLamports = currentLamports + deficitLamports;
+          const result = { walletName, ok: true, sig, lamports: deficitLamports, balanceLamports } satisfies ArmStepResult;
+          results.push(result);
+          onProgress?.({ walletName, status: "armed", sig, lamports: deficitLamports, balanceLamports });
+          succeeded = true;
+          break;
+        } catch (e) {
+          lastError = (e as Error).message;
+          if (!isRateLimitError(e)) break; // non-rate-limit error — don't retry
+        }
       }
+      if (!succeeded) {
+        const result = { walletName, ok: false, error: lastError } satisfies ArmStepResult;
+        results.push(result);
+        onProgress?.({ walletName, status: "error", error: lastError });
+      }
+      if (i < deficits.length - 1) await sleep(ARM_TRANSFER_DELAY_MS);
     }
 
     return results;
@@ -367,7 +388,23 @@ export class SequencerRunner extends EventEmitter {
         }
 
         log.info("cleanup: draining SOL", { from: walletName });
-        const r = await drainSol(this.conn, walletKp, controlKp.publicKey, currentLamports);
+        let r: Awaited<ReturnType<typeof drainSol>> = null;
+        let drainErr = "";
+        for (let attempt = 0; attempt < ARM_RETRY_ATTEMPTS; attempt++) {
+          try {
+            if (attempt > 0) {
+              log.info("cleanup: retrying drain after rate limit", { from: walletName, attempt });
+              await sleep(RATE_LIMIT_PAUSE_MS);
+            }
+            r = await drainSol(this.conn, walletKp, controlKp.publicKey, currentLamports);
+            drainErr = "";
+            break;
+          } catch (e) {
+            drainErr = (e as Error).message;
+            if (!isRateLimitError(e)) break;
+          }
+        }
+        if (drainErr) throw new Error(drainErr);
         if (!r) {
           const balanceLamports = await this.conn.getBalance(walletKp.publicKey, "confirmed").catch(() => null);
           results.push({
@@ -436,12 +473,16 @@ async function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function getBalanceWithRateLimitRetry(conn: Connection, pubkey: PublicKey): Promise<number> {
   try {
     return await conn.getBalance(pubkey, "confirmed");
   } catch (e) {
     if (!isRateLimitError(e)) throw e;
-    await new Promise((r) => setTimeout(r, CLEANUP_RATE_LIMIT_PAUSE_MS));
+    await sleep(RATE_LIMIT_PAUSE_MS);
     return await conn.getBalance(pubkey, "confirmed");
   }
 }

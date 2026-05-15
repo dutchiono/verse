@@ -8,7 +8,6 @@ interface Props {
   solBalance: number | null | undefined;
   onChanged: () => Promise<void> | void;
   onLog?: (text: string, level?: "info" | "warn" | "ok") => void;
-  onSolBalances?: (balances: Record<string, number | null>) => void;
   isVisitor?: boolean;
 }
 
@@ -17,12 +16,11 @@ interface Props {
  * and a withdraw form (exact amount or sweep). Visible only when the pool has
  * a control wallet set.
  */
-export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog, onSolBalances, isVisitor = false }: Props) {
+export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog, isVisitor = false }: Props) {
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
   const [sweep, setSweep] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [checking, setChecking] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [lastSig, setLastSig] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -82,21 +80,6 @@ export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog
     }
   }
 
-  async function checkBalance() {
-    setChecking(true);
-    setErr(null);
-    try {
-      const r = await api.checkWalletBalances([ctrl!.name]);
-      onSolBalances?.(r.balances);
-      const next = r.balances[ctrl!.name];
-      onLog?.(`control balance ${next != null ? (next / 1e9).toFixed(4) : "unknown"} SOL`, next != null ? "ok" : "warn");
-    } catch (e) {
-      setErr((e as Error).message);
-    } finally {
-      setChecking(false);
-    }
-  }
-
   return (
     <div className="ctrl-panel">
       <div className="ctrl-panel-head">
@@ -118,15 +101,6 @@ export function ControlWalletPanel({ pool, wallets, solBalance, onChanged, onLog
         <span className="ctrl-balance mono">
           {balSol != null ? `${balSol.toFixed(4)} SOL` : "— SOL"}
         </span>
-        <button
-          type="button"
-          className="ghost small"
-          disabled={isVisitor || checking}
-          onClick={() => void checkBalance()}
-          title={isVisitor ? "sign in to use" : "explicit one-wallet SOL balance check for LARP"}
-        >
-          {checking ? "checking…" : "check SOL"}
-        </button>
       </div>
 
       <div className="ctrl-withdraw-row">

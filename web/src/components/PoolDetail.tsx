@@ -98,7 +98,6 @@ export function PoolDetail({
           solBalance={controlWalletName ? solBalances[controlWalletName] : null}
           onChanged={onChanged}
           onLog={onLog}
-          onSolBalances={onSolBalances}
           isVisitor={isVisitor}
         />
       )}
@@ -115,7 +114,7 @@ export function PoolDetail({
             walletStatuses={walletStatuses}
             solBalances={solBalances}
             onSolBalances={onSolBalances}
-            balanceCheckWallets={actionWallets}
+            balanceCheckWallets={wallets}
             isVisitor={isVisitor}
           />
         ) : (
