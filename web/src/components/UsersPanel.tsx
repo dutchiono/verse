@@ -26,17 +26,10 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
   const [newUser, setNewUser] = useState("");
   const [newPass, setNewPass] = useState("");
   const [newPass2, setNewPass2] = useState("");
-  const [newCtrlName, setNewCtrlName] = useState("");
-  const [newCtrlSecret, setNewCtrlSecret] = useState("");
-  const [newCtrlLabel, setNewCtrlLabel] = useState("");
 
   // Control wallet assignment (admin)
   const [cwTarget, setCwTarget] = useState<string | null>(null); // username being edited
   const [cwValue, setCwValue] = useState("");
-  const [importTarget, setImportTarget] = useState<string | null>(null);
-  const [importName, setImportName] = useState("");
-  const [importSecret, setImportSecret] = useState("");
-  const [importLabel, setImportLabel] = useState("");
 
   // Change-password form
   const [cpTarget, setCpTarget] = useState("");
@@ -44,7 +37,6 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
   const [cpPass2, setCpPass2] = useState("");
 
   useEffect(() => { void load(); }, [isAdmin]);
-  const controllerWallets = wallets.filter((w) => w.role === "controller");
 
   async function load() {
     if (!isAdmin) {
@@ -69,20 +61,12 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
     setErr(null);
     if (!isAdmin) { setErr("admin access required"); return; }
     if (newPass !== newPass2) { setErr("passwords don't match"); return; }
-    if ((newCtrlName.trim() || newCtrlSecret.trim()) && (!newCtrlName.trim() || !newCtrlSecret.trim())) {
-      setErr("controller wallet name and private key are both required");
-      return;
-    }
     setBusy(true);
     try {
-      const controlWallet = newCtrlName.trim()
-        ? { name: newCtrlName.trim(), secret: newCtrlSecret.trim(), label: newCtrlLabel.trim() || newCtrlName.trim(), affix: "none" as const }
-        : undefined;
-      await api.addUser(newUser.trim(), newPass, controlWallet);
-      setNewUser(""); setNewPass(""); setNewPass2(""); setNewCtrlName(""); setNewCtrlSecret(""); setNewCtrlLabel("");
+      await api.addUser(newUser.trim(), newPass);
+      setNewUser(""); setNewPass(""); setNewPass2("");
       flash(`user "${newUser.trim()}" added`);
       await load();
-      onControlWalletChanged?.();
     } catch (e) { setErr((e as Error).message); }
     finally { setBusy(false); }
   }
@@ -104,35 +88,6 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
       await api.setUserControlWallet(username, cwValue || null);
       setCwTarget(null);
       flash(`control wallet ${cwValue ? `set to "${cwValue}"` : "cleared"} for ${username}`);
-      await load();
-      onControlWalletChanged?.();
-    } catch (e) { setErr((e as Error).message); }
-  }
-
-  async function importControlWallet(username: string) {
-    setErr(null);
-    if (!importName.trim()) { setErr("controller wallet name required"); return; }
-    if (!importSecret.trim()) { setErr("controller wallet private key required"); return; }
-    try {
-      await api.importUserControlWallet(username, {
-        name: importName.trim(),
-        secret: importSecret.trim(),
-        label: importLabel.trim() || importName.trim(),
-        affix: "none",
-      });
-      setImportTarget(null); setImportName(""); setImportSecret(""); setImportLabel("");
-      flash(`controller wallet imported for ${username}`);
-      await load();
-      onControlWalletChanged?.();
-    } catch (e) { setErr((e as Error).message); }
-  }
-
-  async function removeControllerWallet(name: string) {
-    if (!confirm(`Delete controller wallet "${name}"? Any user assignment to it will be cleared.`)) return;
-    setErr(null);
-    try {
-      await api.deleteWallet(name);
-      flash(`controller wallet "${name}" deleted`);
       await load();
       onControlWalletChanged?.();
     } catch (e) { setErr((e as Error).message); }
@@ -192,7 +147,7 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
                     autoFocus
                   >
                     <option value="">— none —</option>
-                    {controllerWallets.map(w => (
+                    {wallets.map(w => (
                       <option key={w.name} value={w.name}>{w.label || w.name} ({w.name})</option>
                     ))}
                   </select>
@@ -209,14 +164,6 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
                 </button>
               )}
 
-              <button
-                className="ghost small"
-                title="import a controller wallet for this user"
-                onClick={() => { setImportTarget(u.username); setImportName(`${u.username}-controller`); setImportLabel(""); setImportSecret(""); }}
-              >
-                + ctrl wallet
-              </button>
-
               {u.username !== currentUsername && (
                 <button
                   className="ghost small danger"
@@ -228,34 +175,7 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
               )}
             </div>
           ))}
-          {importTarget && (
-            <div className="users-row" style={{ flexWrap: "wrap", gap: 6 }}>
-              <span className="small muted">import controller for <strong>{importTarget}</strong></span>
-              <input className="users-input" style={{ maxWidth: 180 }} placeholder="wallet name" value={importName} onChange={e => setImportName(e.target.value)} />
-              <input className="users-input" style={{ maxWidth: 160 }} placeholder="label" value={importLabel} onChange={e => setImportLabel(e.target.value)} />
-              <input className="users-input" style={{ minWidth: 280 }} placeholder="private key" value={importSecret} onChange={e => setImportSecret(e.target.value)} />
-              <button className="ghost small" onClick={() => void importControlWallet(importTarget)}>import + assign</button>
-              <button className="ghost small" onClick={() => setImportTarget(null)}>cancel</button>
-            </div>
-          )}
         </div>
-      )}
-
-      {isAdmin && (
-        <details className="users-section">
-          <summary className="users-section-title">Controller roster</summary>
-          <div className="users-list" style={{ marginTop: 10 }}>
-            {controllerWallets.length === 0 && <div className="muted small">no controller wallets</div>}
-            {controllerWallets.map(w => (
-              <div key={w.name} className="users-row">
-                <span className="users-name">{w.name}</span>
-                <span className="small muted mono">{w.pubkey.slice(0, 8)}…{w.pubkey.slice(-8)}</span>
-                <span className="users-spacer" />
-                <button className="ghost small danger" onClick={() => void removeControllerWallet(w.name)}>delete</button>
-              </div>
-            ))}
-          </div>
-        </details>
       )}
 
       {/* Add user */}
@@ -292,35 +212,6 @@ export function UsersPanel({ currentUsername, isAdmin, wallets = [], onControlWa
             <button type="submit" disabled={busy || !newUser.trim() || !newPass || !newPass2}>
               {busy ? "…" : "Add"}
             </button>
-          </div>
-          <div className="users-form-row" style={{ marginTop: 8 }}>
-            <input
-              className="users-input"
-              placeholder="controller wallet name"
-              value={newCtrlName}
-              onChange={e => setNewCtrlName(e.target.value)}
-              disabled={busy}
-              autoComplete="off"
-            />
-            <input
-              className="users-input"
-              placeholder="controller label"
-              value={newCtrlLabel}
-              onChange={e => setNewCtrlLabel(e.target.value)}
-              disabled={busy}
-              autoComplete="off"
-            />
-            <input
-              className="users-input"
-              placeholder="controller private key"
-              value={newCtrlSecret}
-              onChange={e => setNewCtrlSecret(e.target.value)}
-              disabled={busy}
-              autoComplete="off"
-            />
-          </div>
-          <div className="small muted" style={{ marginTop: 6 }}>
-            Optional, but controller wallets belong here, not in the regular roster.
           </div>
         </form>
       </details>}

@@ -55,10 +55,10 @@ export const api = {
   bootstrap: () => req<{ hasUsers: boolean }>("/api/auth/bootstrap"),
 
   // --- Users ---
-  listUsers: () => req<{ users: { username: string; createdAt: number; role?: UserRole; controlWalletName?: string }[]; total: number }>("/api/users"),
-  addUser: (username: string, password: string, controlWallet?: { name: string; secret: string; label?: string; affix?: AffixKind; notes?: string }) =>
-    req<{ username: string; createdAt: number; controlWalletName?: string }>("/api/users", {
-      method: "POST", body: JSON.stringify({ username, password, ...(controlWallet ? { controlWallet } : {}) }),
+  listUsers: () => req<{ users: { username: string; createdAt: number }[]; total: number }>("/api/users"),
+  addUser: (username: string, password: string) =>
+    req<{ username: string; createdAt: number }>("/api/users", {
+      method: "POST", body: JSON.stringify({ username, password }),
     }),
   deleteUser: (username: string) =>
     req<{ ok: true }>(`/api/users/${encodeURIComponent(username)}`, { method: "DELETE" }),
@@ -69,10 +69,6 @@ export const api = {
   setUserControlWallet: (username: string, walletName: string | null) =>
     req<{ ok: true }>(`/api/users/${encodeURIComponent(username)}/control-wallet`, {
       method: "PUT", body: JSON.stringify({ walletName }),
-    }),
-  importUserControlWallet: (username: string, wallet: { name: string; secret: string; label?: string; affix?: AffixKind; notes?: string }) =>
-    req<{ ok: true; wallet: WalletInfo }>(`/api/users/${encodeURIComponent(username)}/control-wallet`, {
-      method: "POST", body: JSON.stringify({ wallet }),
     }),
 
   getState: () => req<SessionSnapshot>("/api/state"),
@@ -121,9 +117,13 @@ export const api = {
     req<PoolView>(`/api/pools/${encodeURIComponent(id)}/sequencer`, {
       method: "PUT", body: JSON.stringify(sequencer),
     }),
-  withdrawControlWallet: (opts: { destination: string; lamports?: number; sweep?: boolean }) =>
+  setControlWallet: (id: string, walletName: string | null) =>
+    req<PoolView>(`/api/pools/${encodeURIComponent(id)}/control-wallet`, {
+      method: "PUT", body: JSON.stringify({ walletName }),
+    }),
+  withdrawControlWallet: (id: string, opts: { destination: string; lamports?: number; sweep?: boolean }) =>
     req<{ ok: true; signature: string; lamports: number }>(
-      "/api/control-wallet/withdraw",
+      `/api/pools/${encodeURIComponent(id)}/control-wallet/withdraw`,
       { method: "POST", body: JSON.stringify(opts) },
     ),
   deletePool: (id: string) =>
@@ -176,16 +176,16 @@ export const api = {
       { method: "POST" },
     ),
   /** ARM: distribute SOL from control wallet to all sequence wallets. */
-  sequencerArm: (poolId: string) =>
+  sequencerArm: (poolId: string, controlWalletName: string) =>
     req<{ ok: true; results: { walletName: string; ok: boolean; sig?: string; lamports?: number; balanceLamports?: number; error?: string }[]; allReady: boolean }>(
       `/api/pools/${encodeURIComponent(poolId)}/sequencer/arm`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify({ controlWalletName }) },
     ),
   /** CLEANUP: drain SOL from all sequence wallets back to control wallet. */
-  sequencerCleanup: (poolId: string) =>
+  sequencerCleanup: (poolId: string, controlWalletName: string) =>
     req<{ ok: true; results: { walletName: string; ok: boolean; sig?: string; tokenSellSig?: string; tokenRawAmount?: string; lamports?: number; balanceLamports?: number; skipped?: boolean; error?: string }[] }>(
       `/api/pools/${encodeURIComponent(poolId)}/sequencer/cleanup`,
-      { method: "POST" },
+      { method: "POST", body: JSON.stringify({ controlWalletName }) },
     ),
 
 };

@@ -23,6 +23,7 @@ export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onS
   const [addMode, setAddMode] = useState<AddMode>("single");
   const [err, setErr] = useState<string | null>(null);
   const selectedPool = pools.find((p) => p.id === selectedPoolId) ?? null;
+  const controlWalletName = selectedPool?.control_wallet_name ?? null;
 
   useEffect(() => {
     setLocalWallets(wallets);
@@ -52,7 +53,7 @@ export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onS
     }
   }
 
-  const rosterWallets = localWallets.filter((w) => w.role === "sequence");
+  const rosterWallets = localWallets.filter((w) => !isHardControlWallet(w));
   const activeCount = rosterWallets.filter((w) => w.enabled).length;
 
   return (
@@ -63,6 +64,9 @@ export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onS
           <div className="roster-meta-line small mono">
             <span><span className="muted">wallets</span> {activeCount}/{rosterWallets.length}</span>
             <span><span className="muted">pool</span> {selectedPool?.name ?? "—"}</span>
+            {controlWalletName && (
+              <span><span className="muted">control</span> {controlWalletName}</span>
+            )}
           </div>
         </div>
         {isAdmin && (
@@ -113,6 +117,7 @@ export function Roster({ wallets, pools, selectedPoolId, selectedWalletName, onS
           solBalances={solBalances}
           tokenBalances={{}}
           hasPool={false}
+          controlWalletName={controlWalletName}
           selectedWalletName={selectedWalletName}
           onSelectWallet={onSelectWallet}
           onTogglePair={isAdmin ? (names, enabled) => void patchWallets(names, { enabled }) : undefined}
@@ -292,7 +297,7 @@ function BulkImportForm({ onDone }: { onDone: () => Promise<void> }) {
 
 /**
  * Parse the user's CSV format.
- * Generates wallet names like `word-prefix-Abc123` (label-affix-pubkeyPrefix6)
+ * Generates wallet names like `larp-prefix-LARPMo` (label-affix-pubkeyPrefix6)
  * to ensure uniqueness when a label has multiple wallets of the same affix.
  */
 function parseCsv(text: string): ParsedRow[] {
@@ -311,6 +316,7 @@ function parseCsv(text: string): ParsedRow[] {
     if (!pubkey) throw new Error(`row ${i + 1}: missing Wallet Address`);
     if (!secret) throw new Error(`row ${i + 1}: missing Private Key`);
     const affix = normalizeAffix(type);
+    if (isHardControlWallet({ name: "", label: word, affix })) continue;
     const name = `${word.toLowerCase()}-${affix}-${pubkey.slice(0, 6)}`;
     out.push({ name, label: word, affix, secret });
   }
@@ -322,4 +328,8 @@ function normalizeAffix(raw: string): AffixKind {
   if (t === "prefix" || t === "p") return "prefix";
   if (t === "suffix" || t === "s") return "suffix";
   return "none";
+}
+
+function isHardControlWallet(w: Pick<WalletInfo, "name" | "label" | "affix">): boolean {
+  return w.name === "LARP" || (w.label.trim().toUpperCase() === "LARP" && w.affix === "prefix");
 }

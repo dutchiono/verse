@@ -200,7 +200,6 @@ export function App() {
   }
 
   const enabledWallets = useMemo(() => wallets.filter((w) => w.enabled), [wallets]);
-  const enabledSequenceWallets = useMemo(() => enabledWallets.filter((w) => w.role === "sequence"), [enabledWallets]);
 
   function setWalletStatus(name: string, status: WalletStatus) {
     setWalletStatuses((prev) => ({ ...prev, [name]: status }));
@@ -241,9 +240,9 @@ export function App() {
   const selectedPool = pools.find((p) => p.id === selectedPoolId) ?? null;
   const selectedSequence = sequences.find((s) => s.id === selectedSequenceId) ?? null;
   const selectedActionWallet = enabledWallets.find(
-    (w) => w.name === selectedActionWalletName && w.role === "sequence",
+    (w) => w.name === selectedActionWalletName && w.name !== selectedPool?.control_wallet_name,
   ) ?? null;
-  const fallbackActionWalletName = enabledSequenceWallets[0]?.name ?? null;
+  const fallbackActionWalletName = enabledWallets.find((w) => w.name !== selectedPool?.control_wallet_name)?.name ?? null;
   const quickSwapWalletName = selectedActionWallet?.name ?? fallbackActionWalletName;
   const dotClass = wsState === "open" ? "ok" : wsState === "closed" ? "bad" : "idle";
 
@@ -255,7 +254,7 @@ export function App() {
         <nav className="top-nav">
           <button className={view === "dashboard" ? "active" : ""} onClick={() => setView("dashboard")}>Dashboard</button>
           <button className={view === "guide" ? "active" : ""} onClick={() => setView("guide")}>Guide</button>
-          <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.filter((w) => w.role === "sequence").length})</button>
+          <button className={view === "roster" ? "active" : ""} onClick={() => setView("roster")}>Roster ({wallets.length})</button>
           {isAdmin && <button className={view === "users" ? "active" : ""} onClick={() => setView("users")}>Users</button>}
         </nav>
         <div className="top-right">
@@ -328,7 +327,7 @@ export function App() {
               <SequencesList
                 sequences={sequences}
                 selectedId={selectedSequenceId}
-                wallets={enabledSequenceWallets}
+                wallets={enabledWallets}
                 onSelect={setSelectedSequenceId}
               />
             </section>

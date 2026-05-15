@@ -43,7 +43,6 @@ const ARM_TRANSFER_DELAY_MS = 800;        // between SOL top-up transfers during
 const ARM_RETRY_ATTEMPTS = 3;             // retries on rate-limited transfer
 const CLEANUP_WALLET_INTERVAL_MS = 1_000; // min gap between cleanup wallets (was 315)
 const RATE_LIMIT_PAUSE_MS = 12_000;       // pause on any 429 before retry
-const CLEANED_UP_DUST_LAMPORTS = 5_000;
 
 export interface StepEvent {
   poolId: string;
@@ -250,7 +249,6 @@ export class SequencerRunner extends EventEmitter {
   async arm(
     pool: PoolConfig,
     controlWalletName: string,
-    cleanupCheckWalletNames: string[],
     onProgress?: (event: ArmProgressEvent) => void,
   ): Promise<ArmStepResult[]> {
     const controlKp = this.getKeypair(controlWalletName);
@@ -263,8 +261,6 @@ export class SequencerRunner extends EventEmitter {
     const targetLamports = Math.floor(ARM_SOL_PER_WALLET * 1e9);
     const deficits: Array<{ walletName: string; currentLamports: number; deficitLamports: number }> = [];
     const results: ArmStepResult[] = [];
-
-    await this.assertRosterCleanedUp(cleanupCheckWalletNames, controlWalletName);
 
     for (let i = 0; i < uniqueWallets.length; i++) {
       const walletName = uniqueWallets[i]!;
@@ -293,7 +289,7 @@ export class SequencerRunner extends EventEmitter {
       const have = controlBalance / 1e9;
       const short = (requiredLamports - controlBalance) / 1e9;
       throw new Error(
-        `arm needs ${need.toFixed(4)} SOL to top up ${deficits.length} wallet(s) to ${ARM_SOL_PER_WALLET.toFixed(3)} each; controller wallet has ${have.toFixed(4)} SOL and is short ${short.toFixed(4)} SOL`,
+        `arm needs ${need.toFixed(4)} SOL to top up ${deficits.length} wallet(s) to ${ARM_SOL_PER_WALLET.toFixed(3)} each; LARP has ${have.toFixed(4)} SOL and is short ${short.toFixed(4)} SOL`,
       );
     }
 
@@ -437,24 +433,6 @@ export class SequencerRunner extends EventEmitter {
     }
 
     return results;
-  }
-
-  private async assertRosterCleanedUp(walletNames: string[], controlWalletName: string): Promise<void> {
-    const dirty: Array<{ walletName: string; lamports: number }> = [];
-    const names = [...new Set(walletNames)].filter((name) => name !== controlWalletName);
-    for (let i = 0; i < names.length; i++) {
-      const walletName = names[i]!;
-      const kp = this.getAnyKeypair(walletName) ?? this.getKeypair(walletName);
-      if (!kp) throw new Error(`wallet "${walletName}" not loaded — unlock first`);
-      const lamports = await getBalanceWithRateLimitRetry(this.conn, kp.publicKey);
-      if (lamports > CLEANED_UP_DUST_LAMPORTS) dirty.push({ walletName, lamports });
-      if (i < names.length - 1) await sleep(ARM_BALANCE_CHECK_DELAY_MS);
-    }
-    if (dirty.length > 0) {
-      const sample = dirty.slice(0, 6).map((w) => `${w.walletName} ${(w.lamports / 1e9).toFixed(6)} SOL`).join(", ");
-      const more = dirty.length > 6 ? `, +${dirty.length - 6} more` : "";
-      throw new Error(`run Cleanup first: ${dirty.length} roster wallet(s) still hold SOL above dust (${sample}${more})`);
-    }
   }
 }
 

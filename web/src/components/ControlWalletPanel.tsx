@@ -5,7 +5,7 @@ import type { PoolView, WalletInfo } from "../types";
 interface Props {
   pool: PoolView;
   wallets: WalletInfo[];
-  controlWalletName?: string | null;
+  effectiveControlWallet?: string | null; // user's personal wallet overrides pool default
   solBalance: number | null | undefined;
   onChanged: () => Promise<void> | void;
   onLog?: (text: string, level?: "info" | "warn" | "ok") => void;
@@ -17,7 +17,7 @@ interface Props {
  * and a withdraw form (exact amount or sweep). Visible only when the pool has
  * a control wallet set.
  */
-export function ControlWalletPanel({ wallets, controlWalletName, solBalance, onChanged, onLog, isVisitor = false }: Props) {
+export function ControlWalletPanel({ pool, wallets, effectiveControlWallet, solBalance, onChanged, onLog, isVisitor = false }: Props) {
   const [destination, setDestination] = useState("");
   const [amount, setAmount] = useState("");
   const [sweep, setSweep] = useState(false);
@@ -26,7 +26,7 @@ export function ControlWalletPanel({ wallets, controlWalletName, solBalance, onC
   const [lastSig, setLastSig] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const ctrlName = controlWalletName;
+  const ctrlName = effectiveControlWallet ?? pool.control_wallet_name;
   const ctrl = ctrlName ? wallets.find((w) => w.name === ctrlName) : undefined;
 
   if (!ctrlName) return null;
@@ -66,7 +66,7 @@ export function ControlWalletPanel({ wallets, controlWalletName, solBalance, onC
     }
     setBusy(true);
     try {
-      const r = await api.withdrawControlWallet({
+      const r = await api.withdrawControlWallet(pool.id, {
         destination: dest,
         ...(sweep ? { sweep: true } : { lamports }),
       });
@@ -124,7 +124,7 @@ export function ControlWalletPanel({ wallets, controlWalletName, solBalance, onC
         />
         <label
           className="ctrl-sweep-lbl small"
-          title="Sweep sends nearly all SOL from your controller to this receiver. Cleanup is different: it drains sequence wallets back into your controller."
+          title="Sweep sends nearly all SOL from LARP to this receiver. Cleanup is different: it drains sequence wallets back into LARP."
         >
           <input
             type="checkbox"
@@ -132,7 +132,7 @@ export function ControlWalletPanel({ wallets, controlWalletName, solBalance, onC
             onChange={(e) => setSweep(e.target.checked)}
             disabled={busy}
           />
-          sweep controller
+          sweep LARP
         </label>
         <button
           className="ctrl-send-btn"
