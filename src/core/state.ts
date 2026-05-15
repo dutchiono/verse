@@ -7,11 +7,9 @@ import {
   loadAllWallets,
   addWallet as addWalletToStore,
   parseSecret,
-  isReservedControlWallet,
-  CONTROL_WALLET_NAME,
   type WalletStore,
 } from "./wallets.ts";
-import type { LoadedWallet, AffixKind } from "./wallets.ts";
+import type { LoadedWallet, AffixKind, WalletRole } from "./wallets.ts";
 import { encrypt } from "./crypto.ts";
 
 const STORE_PATH = "config/wallets.encrypted.json";
@@ -21,6 +19,7 @@ export interface PublicWalletInfo {
   pubkey: string;
   label: string;
   affix: AffixKind;
+  role: WalletRole;
   enabled: boolean;
   notes?: string;
 }
@@ -89,6 +88,7 @@ class Session extends EventEmitter {
         pubkey: lw.pubkey,
         label: lw.label,
         affix: lw.affix,
+        role: lw.role,
         enabled: lw.enabled,
         notes: notesByName.get(lw.name),
         encrypted: encrypt(secretB58, newPassword),
@@ -100,14 +100,15 @@ class Session extends EventEmitter {
     this.emit("change");
   }
 
-  listPublic(): PublicWalletInfo[] {
+  listPublic(role?: WalletRole): PublicWalletInfo[] {
     if (!existsSync(STORE_PATH)) return [];
     const store = readStore();
-    return store.wallets.map((w) => ({
+    return store.wallets.filter((w) => !role || w.role === role).map((w) => ({
       name: w.name,
       pubkey: w.pubkey,
       label: w.label,
       affix: w.affix,
+      role: w.role,
       enabled: w.enabled,
       notes: w.notes,
     }));
@@ -126,17 +127,15 @@ class Session extends EventEmitter {
     secret: string;
     label: string;
     affix: AffixKind;
+    role?: WalletRole;
     notes?: string;
   }): PublicWalletInfo {
     if (!this.isUnlocked() || !this.password) throw new Error("session is locked");
-    if (isReservedControlWallet(input) && input.name !== CONTROL_WALLET_NAME) {
-      throw new Error("LARP prefix is reserved as the hard control wallet");
-    }
     const kp = parseSecret(input.secret);
     const store = readStore();
     addWalletToStore(
       store,
-      { name: input.name, label: input.label, affix: input.affix, notes: input.notes },
+      { name: input.name, label: input.label, affix: input.affix, role: input.role ?? "sequence", notes: input.notes },
       kp,
       this.password,
     );
@@ -144,7 +143,7 @@ class Session extends EventEmitter {
     this.loaded = loadAllWallets(this.password);
     this.emit("change");
     const w = store.wallets.find((x) => x.name === input.name)!;
-    return { name: w.name, pubkey: w.pubkey, label: w.label, affix: w.affix, enabled: w.enabled, notes: w.notes };
+    return { name: w.name, pubkey: w.pubkey, label: w.label, affix: w.affix, role: w.role, enabled: w.enabled, notes: w.notes };
   }
 
   updateWallet(
@@ -170,7 +169,7 @@ class Session extends EventEmitter {
     for (const w of found) {
       if (patch.label !== undefined) w.label = patch.label;
       if (patch.affix !== undefined) w.affix = patch.affix;
-      if (patch.enabled !== undefined) w.enabled = isReservedControlWallet(w) ? true : patch.enabled;
+      if (patch.enabled !== undefined) w.enabled = patch.enabled;
       if (patch.notes !== undefined) w.notes = patch.notes;
     }
     writeStore(store);
@@ -184,7 +183,7 @@ class Session extends EventEmitter {
       }
     }
     this.emit("change");
-    return found.map((w) => ({ name: w.name, pubkey: w.pubkey, label: w.label, affix: w.affix, enabled: w.enabled, notes: w.notes }));
+    return found.map((w) => ({ name: w.name, pubkey: w.pubkey, label: w.label, affix: w.affix, role: w.role, enabled: w.enabled, notes: w.notes }));
   }
 
   /**
@@ -209,7 +208,6 @@ class Session extends EventEmitter {
     for (const input of inputs) {
       if (!input.name) { errors.push({ name: input.name ?? "(unnamed)", error: "name required" }); continue; }
       if (!input.secret) { errors.push({ name: input.name, error: "secret required" }); continue; }
-      if (isReservedControlWallet(input) && input.name !== CONTROL_WALLET_NAME) { skipped.push(input.name); continue; }
       if (existingNames.has(input.name)) { skipped.push(input.name); continue; }
       try {
         const kp = parseSecret(input.secret);
@@ -217,7 +215,7 @@ class Session extends EventEmitter {
         if (existingPubkeys.has(pubkey)) { skipped.push(input.name); continue; }
         addWalletToStore(
           store,
-          { name: input.name, label: input.label, affix: input.affix, notes: input.notes },
+          { name: input.name, label: input.label, affix: input.affix, role: "sequence", notes: input.notes },
           kp,
           this.password,
         );
@@ -228,6 +226,7 @@ class Session extends EventEmitter {
           pubkey,
           label: input.label,
           affix: input.affix,
+          role: "sequence",
           enabled: true,
           notes: input.notes,
         });
@@ -245,7 +244,6 @@ class Session extends EventEmitter {
 
   deleteWallet(name: string): void {
     if (!this.isUnlocked() || !this.password) throw new Error("session is locked");
-    if (name === CONTROL_WALLET_NAME) throw new Error("LARP is the hard control wallet and cannot be deleted");
     const store = readStore();
     store.wallets = store.wallets.filter((w) => w.name !== name);
     writeStore(store);

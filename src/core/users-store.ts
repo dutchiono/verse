@@ -88,6 +88,17 @@ class UsersStore {
     this.save();
   }
 
+  clearControlWalletReferences(walletName: string): void {
+    let changed = false;
+    for (const user of this.users) {
+      if (user.controlWalletName === walletName) {
+        delete user.controlWalletName;
+        changed = true;
+      }
+    }
+    if (changed) this.save();
+  }
+
   isAdmin(username: string): boolean {
     const user = this.users.find((u) => u.username.toLowerCase() === username.toLowerCase().trim());
     return user?.role === "admin";

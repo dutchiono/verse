@@ -9,12 +9,14 @@ export interface SessionSnapshot {
 
 export type AffixKind = "prefix" | "suffix" | "none";
 export const AFFIX_KINDS: AffixKind[] = ["prefix", "suffix", "none"];
+export type WalletRole = "sequence" | "controller";
 
 export interface WalletInfo {
   name: string;
   pubkey: string;
   label: string;
   affix: AffixKind;
+  role: WalletRole;
   enabled: boolean;
   notes?: string;
 }
@@ -152,7 +154,6 @@ export interface PoolView {
   strategy: StrategyConfig | null;
   strategy_wallets: StrategyAssignment[];
   sequencer: SequencerConfig;
-  control_wallet_name: string | null;
   watching: boolean;
   lastSlot: number | null;
   lastUpdate: number | null;

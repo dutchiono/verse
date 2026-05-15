@@ -5,15 +5,16 @@ import { encrypt, decrypt, type EncryptedBlob } from "./crypto.ts";
 import { makeLogger } from "./logger.ts";
 
 const log = makeLogger("wallets");
-export const CONTROL_WALLET_NAME = "LARP";
 
 export type AffixKind = "prefix" | "suffix" | "none";
+export type WalletRole = "sequence" | "controller";
 
 export interface WalletRecord {
   name: string;
   pubkey: string;
   label: string;            // word/letters the vanity address spells (for sequencer)
   affix: AffixKind;         // where in the pubkey the label sits
+  role: WalletRole;
   enabled: boolean;
   notes?: string;
   encrypted: EncryptedBlob;
@@ -29,15 +30,17 @@ export interface LoadedWallet {
   pubkey: string;
   label: string;
   affix: AffixKind;
+  role: WalletRole;
   enabled: boolean;
   keypair: Keypair;
 }
 
 const STORE_PATH = "config/wallets.encrypted.json";
 
-export function isReservedControlWallet(input: { name?: string; label?: string; affix?: AffixKind }): boolean {
-  if ((input.name ?? "").trim() === CONTROL_WALLET_NAME) return true;
-  return (input.label ?? "").trim().toUpperCase() === "LARP" && input.affix === "prefix";
+function normalizeRole(w: any): WalletRole {
+  if (w.role === "controller") return "controller";
+  if (w.role === "sequence") return "sequence";
+  return String(w.name ?? "").trim() === "LARP" ? "controller" : "sequence";
 }
 
 export function readStore(): WalletStore {
@@ -50,7 +53,8 @@ export function readStore(): WalletStore {
       pubkey: w.pubkey,
       label: w.label ?? "",
       affix: w.affix ?? "none",
-      enabled: isReservedControlWallet(w) ? true : (w.enabled ?? true),
+      role: normalizeRole(w),
+      enabled: w.enabled ?? true,
       notes: w.notes,
       encrypted: w.encrypted,
     }));
@@ -61,7 +65,8 @@ export function readStore(): WalletStore {
     version: 2,
     wallets: (parsed.wallets ?? []).map((w: any) => ({
       ...w,
-      enabled: isReservedControlWallet(w) ? true : (w.enabled ?? true),
+      role: normalizeRole(w),
+      enabled: w.enabled ?? true,
     })),
   } as WalletStore;
 }
@@ -81,13 +86,10 @@ export function parseSecret(input: string): Keypair {
 
 export function addWallet(
   store: WalletStore,
-  input: { name: string; label: string; affix: AffixKind; notes?: string },
+  input: { name: string; label: string; affix: AffixKind; role?: WalletRole; notes?: string },
   keypair: Keypair,
   password: string,
 ): WalletRecord {
-  if (isReservedControlWallet(input) && input.name !== CONTROL_WALLET_NAME) {
-    throw new Error("LARP prefix is reserved as the hard control wallet");
-  }
   if (store.wallets.some((w) => w.name === input.name)) {
     throw new Error(`wallet with name "${input.name}" already exists`);
   }
@@ -97,6 +99,7 @@ export function addWallet(
     pubkey: keypair.publicKey.toBase58(),
     label: input.label,
     affix: input.affix,
+    role: input.role ?? "sequence",
     enabled: true,
     notes: input.notes,
     encrypted: encrypt(secretB58, password),
@@ -116,7 +119,7 @@ export function loadAllWallets(password: string): LoadedWallet[] {
         log.warn(`pubkey mismatch for ${w.name}, skipping`);
         continue;
       }
-      loaded.push({ name: w.name, pubkey: w.pubkey, label: w.label, affix: w.affix, enabled: w.enabled, keypair: kp });
+      loaded.push({ name: w.name, pubkey: w.pubkey, label: w.label, affix: w.affix, role: w.role, enabled: w.enabled, keypair: kp });
     } catch (err) {
       throw new Error(
         `failed to decrypt wallet "${w.name}" — wrong password? (${(err as Error).message})`,

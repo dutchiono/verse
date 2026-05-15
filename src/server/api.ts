@@ -4,7 +4,6 @@ import { makeLogger } from "../core/logger.ts";
 import { session } from "../core/state.ts";
 import {
   pools,
-  CONTROL_WALLET_NAME,
   defaultStrategy,
   defaultSequencer,
   type PoolConfig,
@@ -18,7 +17,7 @@ import { sequences } from "../core/sequences-store.ts";
 import { swapSolForToken, swapTokenForSol } from "../core/jupiter-swap.ts";
 import { transferSol, drainSol } from "../core/sol-transfer.ts";
 import { getWalletTokenUiBalance, getWalletTokenBalance } from "../core/token-ata-balance.ts";
-import type { AffixKind } from "../core/wallets.ts";
+import type { AffixKind, WalletRole } from "../core/wallets.ts";
 import type { TokenInfoClient } from "../core/token-info.ts";
 import { getDbcPoolPrice } from "../core/meteora-client.ts";
 import { detectPoolType } from "../core/pool-detect.ts";
@@ -159,6 +158,7 @@ const VALID_STRATEGY_MODES = ["accumulate", "dip-only", "exit-only", "watch"] as
 const BALANCE_CHECK_REQUESTS_PER_WINDOW = 35;
 const BALANCE_CHECK_WINDOW_MS = 11000;
 const BALANCE_CHECK_INTERVAL_MS = Math.ceil(BALANCE_CHECK_WINDOW_MS / BALANCE_CHECK_REQUESTS_PER_WINDOW);
+const CLEANED_UP_DUST_LAMPORTS = 5_000;
 
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
@@ -189,8 +189,46 @@ function requireUnlocked(): void {
     throw new Error("session is locked");
   }
 }
+function getRequiredUserControlWalletName(user: AuthedUser | null): string {
+  if (!user) throw new Error("unauthorized");
+  const row = users.get(user.username);
+  const walletName = row?.controlWalletName;
+  if (!walletName) throw new Error("no controller wallet assigned to this user");
+  const wallet = session.listPublic("controller").find((w) => w.name === walletName);
+  if (!wallet) throw new Error(`assigned controller wallet "${walletName}" not found`);
+  return walletName;
+}
+async function assertSequenceRosterCleanedUp(ctx: Context): Promise<void> {
+  const dirty: Array<{ walletName: string; lamports: number }> = [];
+  const list = session.listPublic("sequence");
+  for (let i = 0; i < list.length; i++) {
+    const w = list[i]!;
+    const lamports = await ctx.readConn.getBalance(new PublicKey(w.pubkey), "confirmed");
+    if (lamports > CLEANED_UP_DUST_LAMPORTS) dirty.push({ walletName: w.name, lamports });
+    if (i < list.length - 1) await sleep(BALANCE_CHECK_INTERVAL_MS);
+  }
+  if (dirty.length > 0) {
+    const sample = dirty.slice(0, 6).map((w) => `${w.walletName} ${(w.lamports / 1e9).toFixed(6)} SOL`).join(", ");
+    const more = dirty.length > 6 ? `, +${dirty.length - 6} more` : "";
+    throw new Error(`run Cleanup first: ${dirty.length} roster wallet(s) still hold SOL above dust (${sample}${more})`);
+  }
+}
 function poolView(p: PoolConfig) {
   return { ...p, watching: false, lastSlot: null, lastUpdate: null };
+}
+function walletListForRequest(req: Request, role: WalletRole | null) {
+  const authed = getAuthedUser(req);
+  if (role === "sequence") return session.listPublic("sequence");
+  if (role === "controller") {
+    if (authed?.isAdmin) return session.listPublic("controller");
+    const assigned = authed ? users.get(authed.username)?.controlWalletName : null;
+    return assigned ? session.listPublic("controller").filter((w) => w.name === assigned) : [];
+  }
+  if (authed?.isAdmin) return session.listPublic();
+  const sequence = session.listPublic("sequence");
+  const assigned = authed ? users.get(authed.username)?.controlWalletName : null;
+  const controller = assigned ? session.listPublic("controller").filter((w) => w.name === assigned) : [];
+  return [...sequence, ...controller];
 }
 
 export function startServer(port: number, base: Omit<Context, "broadcast">): Server<WsData> {
@@ -303,7 +341,9 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
 
   // ── Public read-only endpoints (no auth required) ────────────────────────
   if (path === "/api/wallets" && method === "GET") {
-    return json({ wallets: session.listPublic() });
+    const role = url.searchParams.get("role") as WalletRole | null;
+    if (role && role !== "sequence" && role !== "controller") return err("role must be sequence|controller");
+    return json({ wallets: walletListForRequest(req, role) });
   }
   if (path === "/api/pools" && method === "GET") {
     return json({ pools: pools.list().map(poolView) });
@@ -358,8 +398,35 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     return json({ users: users.list(), total: users.count() });
   }
   if (path === "/api/users" && method === "POST") {
-    const body = await parseBody<{ username?: string; password?: string }>(req);
+    const body = await parseBody<{
+      username?: string;
+      password?: string;
+      controlWallet?: { name?: string; secret?: string; label?: string; affix?: AffixKind; notes?: string };
+    }>(req);
     if (!body.username || !body.password) return err("username and password required");
+    if (body.controlWallet) {
+      const wallet = body.controlWallet;
+      requireUnlocked();
+      if (!wallet.name) return err("controlWallet.name required");
+      if (!wallet.secret) return err("controlWallet.secret required");
+      if (wallet.affix && !VALID_AFFIX.includes(wallet.affix)) return err("controlWallet.affix must be prefix|suffix|none");
+      const rec = session.addWallet({
+        name: wallet.name,
+        secret: wallet.secret,
+        label: wallet.label ?? wallet.name,
+        affix: wallet.affix ?? "none",
+        role: "controller",
+        notes: wallet.notes,
+      });
+      try {
+        const user = await users.add(body.username, body.password, isBootstrap ? "admin" : "operator");
+        users.setControlWallet(user.username, rec.name);
+        return json({ ...user, controlWalletName: rec.name }, 201);
+      } catch (e) {
+        try { session.deleteWallet(rec.name); } catch { /* rollback best effort */ }
+        throw e;
+      }
+    }
     const user = await users.add(body.username, body.password, isBootstrap ? "admin" : "operator");
     return json(user, 201);
   }
@@ -379,10 +446,38 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
   }
 
   const userControlWalletMatch = path.match(/^\/api\/users\/([^/]+)\/control-wallet$/);
+  if (userControlWalletMatch && method === "POST") {
+    requireAdmin(authedUser);
+    requireUnlocked();
+    const name = decodeURIComponent(userControlWalletMatch[1]!);
+    const body = await parseBody<{ wallet?: { name?: string; secret?: string; label?: string; affix?: AffixKind; notes?: string } }>(req);
+    const wallet = body.wallet;
+    if (!wallet?.name) return err("wallet.name required");
+    if (!wallet.secret) return err("wallet.secret required");
+    if (wallet.affix && !VALID_AFFIX.includes(wallet.affix)) return err("wallet.affix must be prefix|suffix|none");
+    const rec = session.addWallet({
+      name: wallet.name,
+      secret: wallet.secret,
+      label: wallet.label ?? wallet.name,
+      affix: wallet.affix ?? "none",
+      role: "controller",
+      notes: wallet.notes,
+    });
+    try {
+      users.setControlWallet(name, rec.name);
+    } catch (e) {
+      try { session.deleteWallet(rec.name); } catch { /* rollback best effort */ }
+      throw e;
+    }
+    return json({ wallet: rec, ok: true }, 201);
+  }
   if (userControlWalletMatch && method === "PUT") {
     requireAdmin(authedUser);
     const name = decodeURIComponent(userControlWalletMatch[1]!);
     const { walletName } = await parseBody<{ walletName?: string | null }>(req);
+    if (walletName && !session.listPublic("controller").some((w) => w.name === walletName)) {
+      return err(`controller wallet not found: ${walletName}`);
+    }
     users.setControlWallet(name, walletName ?? null);
     return json({ ok: true });
   }
@@ -412,7 +507,9 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
 
   // --- Wallets ---
   if (path === "/api/wallets" && method === "GET") {
-    return json({ wallets: session.listPublic() });
+    const role = url.searchParams.get("role") as WalletRole | null;
+    if (role && role !== "sequence" && role !== "controller") return err("role must be sequence|controller");
+    return json({ wallets: walletListForRequest(req, role) });
   }
   if (path === "/api/wallets" && method === "POST") {
     requireUnlocked();
@@ -426,13 +523,14 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     if (!body.name) return err("name required");
     if (!body.secret) return err("secret (private key) required");
     if (body.affix && !VALID_AFFIX.includes(body.affix)) return err("affix must be prefix|suffix|none");
-    const rec = session.addWallet({
-      name: body.name,
-      secret: body.secret,
-      label: body.label ?? "",
-      affix: body.affix ?? "none",
-      notes: body.notes,
-    });
+      const rec = session.addWallet({
+        name: body.name,
+        secret: body.secret,
+        label: body.label ?? "",
+        affix: body.affix ?? "none",
+        role: "sequence",
+        notes: body.notes,
+      });
     return json(rec);
   }
 
@@ -484,6 +582,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     if (method === "DELETE") {
       session.deleteWallet(name);
       pools.removeWalletEverywhere(name);
+      users.clearControlWalletReferences(name);
       return json({ ok: true });
     }
   }
@@ -491,7 +590,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
   if (path === "/api/wallets/balances" && method === "GET") {
     const requested = new Set((url.searchParams.get("names") ?? "").split(",").map((s) => s.trim()).filter(Boolean));
     if (requested.size === 0) return err("names query param required", 400);
-    const list = session.listPublic().filter((w) => requested.has(w.name));
+    const list = walletListForRequest(req, null).filter((w) => requested.has(w.name));
     const balances: Record<string, number | null> = {};
     if (list.length > 0) {
       try {
@@ -512,7 +611,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     const requested = Array.isArray(body.names) ? [...new Set(body.names.map((s) => s.trim()).filter(Boolean))] : [];
     if (requested.length === 0) return err("names required", 400);
     const requestedSet = new Set(requested);
-    const list = session.listPublic().filter((w) => requestedSet.has(w.name));
+    const list = walletListForRequest(req, null).filter((w) => requestedSet.has(w.name));
     const balances: Record<string, number | null> = {};
     log.info("wallet balance check started", {
       requested: requested.length,
@@ -609,23 +708,20 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     return json(poolView(pool));
   }
 
-  // Withdraw SOL from control wallet: POST /api/pools/:id/control-wallet/withdraw
-  const ctrlWithdrawMatch = path.match(/^\/api\/pools\/([^/]+)\/control-wallet\/withdraw$/);
-  if (ctrlWithdrawMatch && method === "POST") {
+  // Withdraw SOL from the authenticated user's assigned controller wallet.
+  if (path === "/api/control-wallet/withdraw" && method === "POST") {
     requireUnlocked();
-    const id = decodeURIComponent(ctrlWithdrawMatch[1]!);
-    const pool = pools.get(id);
-    if (!pool) return err(`pool not found: ${id}`, 404);
-    if (!pool.control_wallet_name) return err("no control wallet set on this pool");
+    const controlWalletName = getRequiredUserControlWalletName(authedUser);
     const body = await parseBody<{ destination?: string; lamports?: number; sweep?: boolean }>(req);
     if (!body.destination) return err("destination required");
     let destPk: PublicKey;
     try { destPk = new PublicKey(body.destination); }
     catch { return err("invalid destination pubkey"); }
-    const ctrl = session.getLoadedByName(pool.control_wallet_name);
-    if (!ctrl) return err(`control wallet "${pool.control_wallet_name}" not loaded (disabled?)`);
+    const ctrl = session.getLoadedByName(controlWalletName);
+    if (!ctrl) return err(`controller wallet "${controlWalletName}" not loaded (disabled?)`);
     if (ctrl.pubkey === destPk.toBase58()) return err("destination is the control wallet itself");
     try {
+      await assertSequenceRosterCleanedUp(ctx);
       if (body.sweep) {
         const r = await drainSol(ctx.conn, ctrl.keypair, destPk);
         if (!r) return err("balance below dust threshold — nothing to send");
@@ -657,13 +753,17 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     }
 
     if (action === "arm") {
-      const body = await parseBody<{ controlWalletName: string }>(req);
-      if (!body?.controlWalletName) return err("controlWalletName required");
+      const controlWalletName = getRequiredUserControlWalletName(authedUser);
       if (pool.sequencer.queue.length === 0) return err("sequencer queue is empty");
       try {
-        const results = await ctx.sequencer.arm(pool, body.controlWalletName, (event: ArmProgressEvent) => {
-          ctx.broadcast({ type: "sequencer-arm-progress", poolId: id, ...event });
-        });
+        const results = await ctx.sequencer.arm(
+          pool,
+          controlWalletName,
+          session.listPublic("sequence").map((w) => w.name),
+          (event: ArmProgressEvent) => {
+            ctx.broadcast({ type: "sequencer-arm-progress", poolId: id, ...event });
+          },
+        );
         const allReady = results.length > 0 && results.every((r) => r.ok);
         return json({ ok: true, results, allReady });
       } catch (e) {
@@ -672,13 +772,12 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     }
 
     if (action === "cleanup") {
-      const body = await parseBody<{ controlWalletName: string }>(req);
-      if (!body?.controlWalletName) return err("controlWalletName required");
+      const controlWalletName = getRequiredUserControlWalletName(authedUser);
       try {
         const results = await ctx.sequencer.cleanup(
           pool,
-          session.listPublic().map((w) => w.name),
-          body.controlWalletName,
+          session.listPublic("sequence").map((w) => w.name),
+          controlWalletName,
         );
         return json({ ok: true, results });
       } catch (e) {
@@ -697,7 +796,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
   }
 
   const poolMatch = path.match(
-    /^\/api\/pools\/([^/]+)(\/(strategy|sequencer|strategy-wallets|control-wallet|token-balances|price))?$/,
+    /^\/api\/pools\/([^/]+)(\/(strategy|sequencer|strategy-wallets|token-balances|price))?$/,
   );
   if (poolMatch) {
     const id = decodeURIComponent(poolMatch[1]!);
@@ -710,7 +809,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
       const mint = existing.token_mint;
       const requested = new Set((url.searchParams.get("names") ?? "").split(",").map((s) => s.trim()).filter(Boolean));
       if (requested.size === 0) return err("names query param required", 400);
-      const publicWallets = session.listPublic();
+      const publicWallets = walletListForRequest(req, null);
       const list = publicWallets.filter((w) => requested.has(w.name));
       const balances: Record<string, number | null> = {};
       for (const w of list) balances[w.name] = null;
@@ -765,7 +864,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     if (action === "sequencer" && method === "PUT") {
       requireUnlocked();
       const newSeq = (await parseBody<SequencerConfig>(req)) as SequencerConfig;
-      const known = new Set(session.listPublic().map((w) => w.name));
+      const known = new Set(session.listPublic("sequence").map((w) => w.name));
       for (const s of newSeq.queue) {
         if (!known.has(s.walletName)) return err(`unknown wallet in sequencer queue: ${s.walletName}`);
       }
@@ -784,22 +883,11 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
       });
       return json(poolView(updated));
     }
-    if (action === "control-wallet" && method === "PUT") {
-      requireUnlocked();
-      await parseBody<{ walletName: string | null }>(req);
-      const known = new Set(session.listPublic().map((w) => w.name));
-      if (!known.has(CONTROL_WALLET_NAME)) return err(`unknown wallet: ${CONTROL_WALLET_NAME}`);
-      if (existing.sequencer.queue.some((s) => s.walletName === CONTROL_WALLET_NAME)) {
-        return err(`"${CONTROL_WALLET_NAME}" is in the sequencer queue — remove it first`);
-      }
-      const updated = pools.update(id, { control_wallet_name: CONTROL_WALLET_NAME });
-      return json(poolView(updated));
-    }
     if (action === "strategy-wallets" && method === "PUT") {
       requireUnlocked();
       const body = (await parseBody<{ assignments: StrategyAssignment[] }>(req));
       if (!Array.isArray(body.assignments)) return err("assignments must be an array");
-      const known = new Set(session.listPublic().map((w) => w.name));
+      const known = new Set(session.listPublic("sequence").map((w) => w.name));
       for (const a of body.assignments) {
         if (!known.has(a.walletName)) return err(`unknown wallet: ${a.walletName}`);
         if (!VALID_STRATEGY_MODES.includes(a.mode)) return err(`invalid mode: ${a.mode}`);
@@ -829,7 +917,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     if (!body.queue || !body.action || !body.schedule || !body.size || !body.loop_mode) {
       return err("queue, action, schedule, size, and loop_mode are required");
     }
-    const known = new Set(session.listPublic().map((w) => w.name));
+    const known = new Set(session.listPublic("sequence").map((w) => w.name));
     for (const step of body.queue) {
       if (!known.has(step.walletName)) return err(`unknown wallet in queue: ${step.walletName}`);
     }
@@ -863,7 +951,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
         loop_mode: SequencerConfig["loop_mode"];
       }>>(req);
       if (patch.queue) {
-        const known = new Set(session.listPublic().map((w) => w.name));
+        const known = new Set(session.listPublic("sequence").map((w) => w.name));
         for (const step of patch.queue) {
           if (!known.has(step.walletName)) return err(`unknown wallet in queue: ${step.walletName}`);
         }
@@ -893,6 +981,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     if (!pool) return err(`pool not found: ${body.poolId}`, 404);
     const loaded = session.getLoadedByName(body.walletName);
     if (!loaded) return err(`wallet not loaded: ${body.walletName}`);
+    if (loaded.role !== "sequence") return err("only regular roster wallets can swap");
     const slippage = body.slippageBps ?? 150;
     if (slippage < 1 || slippage > 2500) return err("slippageBps must be 1..2500");
     const lamports = Math.floor(body.solAmount * 1e9);
@@ -925,6 +1014,7 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
     if (!pool) return err(`pool not found: ${body.poolId}`, 404);
     const loaded = session.getLoadedByName(body.walletName);
     if (!loaded) return err(`wallet not loaded: ${body.walletName}`);
+    if (loaded.role !== "sequence") return err("only regular roster wallets can swap");
     const slippage = body.slippageBps ?? 150;
     if (slippage < 1 || slippage > 2500) return err("slippageBps must be 1..2500");
 

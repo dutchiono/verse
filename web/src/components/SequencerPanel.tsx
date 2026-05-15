@@ -16,7 +16,7 @@ interface Props {
   solBalances?: Record<string, number | null>;
   onSolBalances?: (balances: Record<string, number | null>) => void;
   balanceCheckWallets?: WalletInfo[];
-  effectiveControlWallet?: string | null;
+  controlWalletName?: string | null;
   isVisitor?: boolean;
 }
 
@@ -27,6 +27,7 @@ interface WordStep {
   walletNames: string[]; // in firing order: prefix first, then suffix
 }
 
+type WalletSideMode = "prefix" | "suffix" | "pair";
 
 const AFFIX_ORDER: Record<string, number> = { prefix: 0, suffix: 1, none: 2 };
 
@@ -128,15 +129,14 @@ export function SequencerPanel({
   solBalances = {},
   onSolBalances,
   balanceCheckWallets = [],
-  effectiveControlWallet = null,
+  controlWalletName = null,
   isVisitor = false,
 }: Props) {
   const [wordQueue, setWordQueue] = useState<WordStep[]>([]);
   const [action, setAction] = useState<SequencerAction>("buy-sell");
+  const [walletSideMode, setWalletSideMode] = useState<WalletSideMode>("pair");
   const [solAmount, setSolAmount] = useState(0.001);
-  const controlWallet = effectiveControlWallet ?? pool.control_wallet_name ?? "";
-  const controlWalletInfo = wallets.find((w) => w.name === controlWallet) ?? null;
-  const controlLabel = controlWalletInfo?.label?.trim() || null;
+  const controlWallet = controlWalletName ?? "";
   const [dirty, setDirty] = useState(false);
   const [busy, setBusy] = useState(false);
   const [arming, setArming] = useState(false);
@@ -164,16 +164,13 @@ export function SequencerPanel({
     setErr(null);
   }, [selectedSequence?.id]);
 
-  // Exclude legacy strategy_wallets, the control wallet itself, and anything
-  // sharing the control wallet's label group (e.g. LARP-prefix as control hides
-  // the LARP-suffix from the picker too).
+  // Controller wallets are not in this list; exclude strategy wallets from the word picker.
   const blocked = new Set([
     ...pool.strategy_wallets.map((a) => a.walletName),
-    ...(controlWallet ? [controlWallet] : []),
   ]);
   const available = wallets.filter((w) => {
+    if (w.role !== "sequence") return false;
     if (blocked.has(w.name)) return false;
-    if (controlLabel && (w.label.trim() || "") === controlLabel) return false;
     return true;
   });
   const wordMap = buildWordMap(available);
@@ -193,7 +190,9 @@ export function SequencerPanel({
   function addWord(label: string) {
     const group = wordMap.get(label);
     if (!group || group.length === 0) return;
-    const step: WordStep = { uid: uid(), label, walletNames: group.map((w) => w.name) };
+    const selected = walletSideMode === "pair" ? group : group.filter((w) => w.affix === walletSideMode);
+    if (selected.length === 0) return;
+    const step: WordStep = { uid: uid(), label, walletNames: selected.map((w) => w.name) };
     setWordQueue((prev) => [...prev, step]);
     markDirty();
   }
@@ -259,7 +258,7 @@ export function SequencerPanel({
     const allNames = wordQueueToFiringFlat(wordQueue).map((s) => s.walletName);
     for (const name of allNames) onWalletStatus?.(name, "idle");
     try {
-      const r = await api.sequencerArm(pool.id, controlWallet);
+      const r = await api.sequencerArm(pool.id);
       setArmed(r.allReady);
       setCompletedFireCount(0);
       for (const res of r.results) onWalletStatus?.(res.walletName, res.ok ? "armed" : "error");
@@ -325,7 +324,7 @@ export function SequencerPanel({
     for (const name of allNames) onWalletStatus?.(name, "cleaning");
     setCleaning(true); setErr(null);
     try {
-      const r = await api.sequencerCleanup(pool.id, controlWallet);
+      const r = await api.sequencerCleanup(pool.id);
       for (const res of r.results) onWalletStatus?.(res.walletName, res.ok ? "idle" : "error");
       onSolBalances?.(Object.fromEntries(
         r.results
@@ -387,7 +386,7 @@ export function SequencerPanel({
         <button
           className={`seq-arm-btn ${armed ? "armed" : ""}`}
           disabled={isVisitor || !canArm}
-          title={isVisitor ? "sign in to use" : !controlWallet ? "LARP control wallet is not loaded" : undefined}
+          title={isVisitor ? "sign in to use" : !controlWallet ? "no controller wallet assigned to your user" : undefined}
           onClick={() => void doArm()}
         >
           {arming ? "arming…" : armed ? "✓ Armed" : "Arm"}
@@ -405,7 +404,7 @@ export function SequencerPanel({
         <button
           className="seq-cleanup-btn"
           disabled={isVisitor || !canCleanup}
-          title={isVisitor ? "sign in to use" : !controlWallet ? "LARP control wallet is not loaded" : undefined}
+          title={isVisitor ? "sign in to use" : !controlWallet ? "no controller wallet assigned to your user" : undefined}
           onClick={() => void doCleanup()}
         >
           {cleaning ? "cleaning…" : "Cleanup"}
@@ -427,6 +426,12 @@ export function SequencerPanel({
           <button className={action === "buy" ? "active" : ""} onClick={() => { setAction("buy"); markDirty(); }}>Buy</button>
           <button className={action === "sell" ? "active" : ""} onClick={() => { setAction("sell"); markDirty(); }}>Sell</button>
           <button className={action === "buy-sell" ? "active" : ""} onClick={() => { setAction("buy-sell"); markDirty(); }}>Buy+Sell</button>
+        </div>
+
+        <div className="seq-side-toggle" title="which wallet side to add when clicking a word">
+          <button className={walletSideMode === "prefix" ? "active" : ""} onClick={() => setWalletSideMode("prefix")}>Prefix</button>
+          <button className={walletSideMode === "suffix" ? "active" : ""} onClick={() => setWalletSideMode("suffix")}>Suffix</button>
+          <button className={walletSideMode === "pair" ? "active" : ""} onClick={() => setWalletSideMode("pair")}>P+S</button>
         </div>
 
         <label className="seq-sol-field">

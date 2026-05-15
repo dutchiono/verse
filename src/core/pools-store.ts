@@ -5,7 +5,6 @@ import { makeLogger } from "./logger.ts";
 
 const log = makeLogger("pools-store");
 const PATH = "config/pools.json";
-export const CONTROL_WALLET_NAME = "LARP";
 
 export type PoolType =
   | "meteora-dbc"
@@ -89,9 +88,6 @@ export interface PoolConfig {
   strategy: StrategyConfig | null;
   strategy_wallets: StrategyAssignment[];
   sequencer: SequencerConfig;
-  /** Name of the wallet used to fund (ARM) and recover (CLEANUP) sequence wallets.
-   *  Excluded from the sequencer word picker. null/undefined = unset. */
-  control_wallet_name?: string | null;
 }
 
 export interface PoolsFile {
@@ -196,6 +192,21 @@ function validateAssignments(
   }
 }
 
+function normalizePool(p: any): PoolConfig {
+  return {
+    id: p.id,
+    name: p.name ?? p.id,
+    type: p.type,
+    pool_address: p.pool_address,
+    token_mint: p.token_mint,
+    active: Boolean(p.active),
+    watch_graduation: p.watch_graduation ?? true,
+    strategy: p.strategy ?? null,
+    strategy_wallets: p.strategy_wallets ?? [],
+    sequencer: p.sequencer ?? defaultSequencer(),
+  };
+}
+
 class PoolsStore extends EventEmitter {
   private cache: PoolsFile | null = null;
 
@@ -210,30 +221,16 @@ class PoolsStore extends EventEmitter {
     // Migrate from older shapes lacking version/sequencer/strategy_wallets.
     if (!parsed.version || parsed.version < 2) {
       const pools: PoolConfig[] = (parsed.pools ?? []).map((p: any) => ({
-        id: p.id,
-        name: p.name ?? p.id,
-        type: p.type,
-        pool_address: p.pool_address,
-        token_mint: p.token_mint,
+        ...normalizePool(p),
         active: false,                         // safe default after migration
-        watch_graduation: p.watch_graduation ?? true,
-        strategy: p.strategy ?? null,
-        strategy_wallets: p.strategy_wallets ?? [],
-        sequencer: p.sequencer ?? defaultSequencer(),
-        control_wallet_name: CONTROL_WALLET_NAME,
       }));
       this.cache = { version: 2, pools };
       this.write(this.cache);
       return this.cache;
     }
-    const file = parsed as PoolsFile;
-    let changed = false;
-    for (const p of file.pools ?? []) {
-      if (p.control_wallet_name !== CONTROL_WALLET_NAME) {
-        p.control_wallet_name = CONTROL_WALLET_NAME;
-        changed = true;
-      }
-    }
+    const original = JSON.stringify(parsed.pools ?? []);
+    const file: PoolsFile = { version: 2, pools: (parsed.pools ?? []).map(normalizePool) };
+    const changed = JSON.stringify(file.pools) !== original;
     this.cache = file;
     if (changed) this.write(file);
     return this.cache;
@@ -282,7 +279,6 @@ class PoolsStore extends EventEmitter {
       strategy: input.strategy ?? null,
       strategy_wallets: [],
       sequencer: defaultSequencer(),
-      control_wallet_name: CONTROL_WALLET_NAME,
     };
     file.pools.push(pool);
     this.write(file);
@@ -304,6 +300,7 @@ class PoolsStore extends EventEmitter {
     validateAssignments(nextStrategyWallets, nextSequencer);
 
     const wasActive = pool.active;
+    delete (patch as any).control_wallet_name;
     Object.assign(pool, patch);
     this.write(file);
     log.info("pool updated", { id, patch: Object.keys(patch) });

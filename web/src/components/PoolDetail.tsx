@@ -39,10 +39,9 @@ export function PoolDetail({
 }: Props) {
   const [token, setToken] = useState<TokenInfo | null>(null);
   const [tokenErr, setTokenErr] = useState<string | null>(null);
-  const controlWalletName = pool?.control_wallet_name ?? null;
-  // User's personal control wallet takes precedence over the pool default.
-  const effectiveControlWallet = userControlWallet ?? controlWalletName;
-  const actionWallets = effectiveControlWallet ? wallets.filter((w) => w.name !== effectiveControlWallet) : wallets;
+  const sequenceWallets = wallets.filter((w) => w.role === "sequence");
+  const controlWallet = userControlWallet ? wallets.find((w) => w.name === userControlWallet && w.role === "controller") : null;
+  const balanceCheckWallets = controlWallet ? [...sequenceWallets, controlWallet] : sequenceWallets;
 
   useEffect(() => {
     if (!pool) { setToken(null); setTokenErr(null); return; }
@@ -82,7 +81,7 @@ export function PoolDetail({
 
           <JupiterQuickSwap
             pool={pool}
-            wallets={actionWallets}
+            wallets={sequenceWallets}
             selectedWalletName={selectedWalletName}
             tokenBalances={{}}
             onLog={onLog}
@@ -99,8 +98,8 @@ export function PoolDetail({
         <ControlWalletPanel
           pool={pool}
           wallets={wallets}
-          effectiveControlWallet={effectiveControlWallet}
-          solBalance={effectiveControlWallet ? solBalances[effectiveControlWallet] : null}
+          controlWalletName={userControlWallet}
+          solBalance={userControlWallet ? solBalances[userControlWallet] : null}
           onChanged={onChanged}
           onLog={onLog}
           isVisitor={isVisitor}
@@ -119,8 +118,8 @@ export function PoolDetail({
             walletStatuses={walletStatuses}
             solBalances={solBalances}
             onSolBalances={onSolBalances}
-            effectiveControlWallet={effectiveControlWallet}
-            balanceCheckWallets={wallets}
+            controlWalletName={userControlWallet}
+            balanceCheckWallets={balanceCheckWallets}
             isVisitor={isVisitor}
           />
         ) : (
@@ -133,16 +132,15 @@ export function PoolDetail({
           <span className="pd-roster-title">Roster</span>
           {pool && <span className="small muted mono">{short(pool.token_mint)}</span>}
         </div>
-        {actionWallets.length === 0 ? (
+        {sequenceWallets.length === 0 ? (
           <div className="muted small">no wallets on roster</div>
         ) : (
           <WordPairGrid
-            wallets={actionWallets}
+            wallets={sequenceWallets}
             statuses={walletStatuses}
             solBalances={solBalances}
             tokenBalances={{}}
             hasPool={false}
-            controlWalletName={pool?.control_wallet_name ?? null}
             selectedWalletName={selectedWalletName}
             onSelectWallet={onSelectWallet}
           />
