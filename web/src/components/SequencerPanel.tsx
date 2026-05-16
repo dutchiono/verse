@@ -20,11 +20,11 @@ interface Props {
   isVisitor?: boolean;
 }
 
-/** A single entry in the UI queue — one "word" = 1 or 2 wallet fires (prefix then suffix). */
+/** A single entry in the UI queue — one "word" = 1 or 2 wallet fires (prefix lane, then suffix lane). */
 interface WordStep {
   uid: string;
   label: string;
-  walletNames: string[]; // in firing order: prefix first, then suffix
+  walletNames: string[]; // lane order: prefix first, then suffix
 }
 
 
@@ -46,35 +46,54 @@ function buildWordMap(wallets: WalletInfo[]): Map<string, WalletInfo[]> {
   return m;
 }
 
-/**
- * Reconstruct WordSteps from a flat backend queue.
- * Consecutive prefix+suffix of the same label are merged into one WordStep.
- */
+/** Reconstruct WordSteps from a flat backend queue. */
 function flatToWordQueue(queue: { walletName: string }[], wallets: WalletInfo[]): WordStep[] {
   const result: WordStep[] = [];
-  let i = 0;
-  while (i < queue.length) {
-    const name = queue[i]!.walletName;
+  const pendingByLabel = new Map<string, WordStep[]>();
+
+  for (const step of queue) {
+    const name = step.walletName;
     const w = wallets.find((x) => x.name === name);
     const label = w?.label || name;
 
-    if (w?.affix === "prefix" && i + 1 < queue.length) {
-      const nextName = queue[i + 1]!.walletName;
-      const nw = wallets.find((x) => x.name === nextName);
-      if ((nw?.label || nextName) === label && nw?.affix === "suffix") {
-        result.push({ uid: uid(), label, walletNames: [name, nextName] });
-        i += 2;
+    if (w?.affix === "suffix") {
+      const pending = pendingByLabel.get(label)?.find((x) => x.walletNames.length === 1);
+      if (pending) {
+        pending.walletNames.push(name);
         continue;
       }
     }
-    result.push({ uid: uid(), label, walletNames: [name] });
-    i++;
+
+    const wordStep = { uid: uid(), label, walletNames: [name] };
+    result.push(wordStep);
+    if (w?.affix === "prefix") {
+      const pending = pendingByLabel.get(label) ?? [];
+      pending.push(wordStep);
+      pendingByLabel.set(label, pending);
+    }
+  }
+
+  for (const step of result) {
+    step.walletNames.sort((a, b) => {
+      const aw = wallets.find((x) => x.name === a);
+      const bw = wallets.find((x) => x.name === b);
+      return affixOrder(aw?.affix ?? "none") - affixOrder(bw?.affix ?? "none");
+    });
   }
   return result.reverse();
 }
 
 function wordQueueToFiringFlat(wq: WordStep[]): { walletName: string }[] {
-  return [...wq].reverse().flatMap((w) => w.walletNames.map((name) => ({ walletName: name })));
+  const firingWords = [...wq].reverse();
+  const laneCount = Math.max(0, ...firingWords.map((w) => w.walletNames.length));
+  const queue: { walletName: string }[] = [];
+  for (let lane = 0; lane < laneCount; lane++) {
+    for (const word of firingWords) {
+      const walletName = word.walletNames[lane];
+      if (walletName) queue.push({ walletName });
+    }
+  }
+  return queue;
 }
 
 function fireCount(action: SequencerAction, flatSteps: { walletName: string }[]): number {
@@ -84,19 +103,9 @@ function fireCount(action: SequencerAction, flatSteps: { walletName: string }[])
 function plannedStep(action: SequencerAction, flatSteps: { walletName: string }[], i: number): { walletName: string; action: "buy" | "sell" } {
   if (action === "sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "sell" };
   if (action !== "buy-sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "buy" };
-  let n = i % (flatSteps.length * 2);
-  for (let start = 0; start < flatSteps.length; start += 2) {
-    const pairLen = Math.min(2, flatSteps.length - start);
-    const pairCycle = pairLen * 2;
-    if (n < pairCycle) {
-      return {
-        walletName: flatSteps[start + (n % pairLen)]?.walletName ?? "",
-        action: n < pairLen ? "buy" : "sell",
-      };
-    }
-    n -= pairCycle;
-  }
-  return { walletName: "", action: "buy" };
+  const n = i % (flatSteps.length * 2);
+  const actionForStep = n < flatSteps.length ? "buy" : "sell";
+  return { walletName: flatSteps[n % flatSteps.length]?.walletName ?? "", action: actionForStep };
 }
 
 function buildPlannedTimeline(action: SequencerAction, flatSteps: { walletName: string }[]): Array<{ walletName: string; action: "buy" | "sell" }> {
