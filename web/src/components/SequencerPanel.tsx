@@ -20,11 +20,11 @@ interface Props {
   isVisitor?: boolean;
 }
 
-/** A single entry in the UI queue — one "word" = 1 or 2 wallet fires (prefix lane, then suffix lane). */
+/** A single entry in the UI queue — one "word" = 1 or 2 wallet fires (prefix, then suffix). */
 interface WordStep {
   uid: string;
   label: string;
-  walletNames: string[]; // lane order: prefix first, then suffix
+  walletNames: string[]; // firing order: prefix first, then suffix
 }
 
 
@@ -80,20 +80,11 @@ function flatToWordQueue(queue: { walletName: string }[], wallets: WalletInfo[])
       return affixOrder(aw?.affix ?? "none") - affixOrder(bw?.affix ?? "none");
     });
   }
-  return result.reverse();
+  return result;
 }
 
 function wordQueueToFiringFlat(wq: WordStep[]): { walletName: string }[] {
-  const firingWords = [...wq].reverse();
-  const laneCount = Math.max(0, ...firingWords.map((w) => w.walletNames.length));
-  const queue: { walletName: string }[] = [];
-  for (let lane = 0; lane < laneCount; lane++) {
-    for (const word of firingWords) {
-      const walletName = word.walletNames[lane];
-      if (walletName) queue.push({ walletName });
-    }
-  }
-  return queue;
+  return wq.flatMap((w) => w.walletNames.map((name) => ({ walletName: name })));
 }
 
 function fireCount(action: SequencerAction, flatSteps: { walletName: string }[]): number {
@@ -103,9 +94,19 @@ function fireCount(action: SequencerAction, flatSteps: { walletName: string }[])
 function plannedStep(action: SequencerAction, flatSteps: { walletName: string }[], i: number): { walletName: string; action: "buy" | "sell" } {
   if (action === "sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "sell" };
   if (action !== "buy-sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "buy" };
-  const n = i % (flatSteps.length * 2);
-  const actionForStep = n < flatSteps.length ? "buy" : "sell";
-  return { walletName: flatSteps[n % flatSteps.length]?.walletName ?? "", action: actionForStep };
+  let n = i % (flatSteps.length * 2);
+  for (let start = 0; start < flatSteps.length; start += 2) {
+    const pairLen = Math.min(2, flatSteps.length - start);
+    const pairCycle = pairLen * 2;
+    if (n < pairCycle) {
+      return {
+        walletName: flatSteps[start + (n % pairLen)]?.walletName ?? "",
+        action: n < pairLen ? "buy" : "sell",
+      };
+    }
+    n -= pairCycle;
+  }
+  return { walletName: "", action: "buy" };
 }
 
 function buildPlannedTimeline(action: SequencerAction, flatSteps: { walletName: string }[]): Array<{ walletName: string; action: "buy" | "sell" }> {

@@ -444,13 +444,23 @@ function buildIndices(len: number, mode: string): number[] {
   const idx = Array.from({ length: len }, (_, i) => i);
   return mode === "shuffle" ? shuffle(idx) : idx;
 }
-function planStep(pool: PoolConfig, cursor: number): { idx: number; action: "buy" | "sell" } {
+export function planStep(pool: Pick<PoolConfig, "sequencer">, cursor: number): { idx: number; action: "buy" | "sell" } {
   const len = pool.sequencer.queue.length;
   const action = pool.sequencer.action;
   if (action === "sell") return { idx: cursor % len, action: "sell" };
   if (action === "buy-sell") {
-    const n = cursor % (len * 2);
-    return { idx: n % len, action: n < len ? "buy" : "sell" };
+    let n = cursor % (len * 2);
+    for (let start = 0; start < len; start += 2) {
+      const pairLen = Math.min(2, len - start);
+      const pairCycle = pairLen * 2;
+      if (n < pairCycle) {
+        return {
+          idx: start + (n % pairLen),
+          action: n < pairLen ? "buy" : "sell",
+        };
+      }
+      n -= pairCycle;
+    }
   }
   return { idx: cursor % len, action: "buy" };
 }
