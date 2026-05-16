@@ -348,6 +348,7 @@ export class SequencerRunner extends EventEmitter {
 
     for (const walletName of walletNames) {
       const startedAt = Date.now();
+      let shouldThrottle = false;
       if (walletName === controlWalletName || seen.has(walletName)) continue;
       seen.add(walletName);
 
@@ -364,6 +365,7 @@ export class SequencerRunner extends EventEmitter {
           continue;
         }
 
+        shouldThrottle = true;
         const tokenBal = await getWalletTokenBalance(this.conn, walletKp.publicKey.toBase58(), pool.token_mint);
         let tokenSellSig: string | undefined;
         let tokenRawAmount: string | undefined;
@@ -427,8 +429,10 @@ export class SequencerRunner extends EventEmitter {
         results.push({ walletName, ok: false, error });
         log.warn("cleanup: wallet failed", { from: walletName, error });
       } finally {
-        const waitMs = CLEANUP_WALLET_INTERVAL_MS - (Date.now() - startedAt);
-        if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+        if (shouldThrottle) {
+          const waitMs = CLEANUP_WALLET_INTERVAL_MS - (Date.now() - startedAt);
+          if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+        }
       }
     }
 

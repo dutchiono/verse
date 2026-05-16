@@ -15,9 +15,10 @@ jobs:
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: |
-            set -e
+            set -euo pipefail
+            export PATH="$HOME/.bun/bin:$PATH"
             cd ${{ secrets.DEPLOY_PATH }}
-            git pull origin master
-            cd web && bun run build && cd ..
+            git pull --ff-only origin master
+            cd web && "$HOME/.bun/bin/bun" run build && cd ..
             sudo systemctl restart verse.service
             echo "Deploy complete."
