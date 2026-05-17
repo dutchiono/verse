@@ -450,16 +450,17 @@ export function planStep(pool: Pick<PoolConfig, "sequencer">, cursor: number): {
   if (action === "sell") return { idx: cursor % len, action: "sell" };
   if (action === "buy-sell") {
     let n = cursor % (len * 2);
-    for (let start = 0; start < len; start += 2) {
-      const pairLen = Math.min(2, len - start);
-      const pairCycle = pairLen * 2;
-      if (n < pairCycle) {
+    const laneLen = Math.ceil(len / 2);
+    for (let start = 0; start < len; start += laneLen) {
+      const blockLen = Math.min(laneLen, len - start);
+      const blockCycle = blockLen * 2;
+      if (n < blockCycle) {
         return {
-          idx: start + (n % pairLen),
-          action: n < pairLen ? "buy" : "sell",
+          idx: start + (n % blockLen),
+          action: n < blockLen ? "buy" : "sell",
         };
       }
-      n -= pairCycle;
+      n -= blockCycle;
     }
   }
   return { idx: cursor % len, action: "buy" };

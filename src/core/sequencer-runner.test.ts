@@ -16,8 +16,8 @@ function poolWithQueue(walletNames: string[], action: PoolConfig["sequencer"]["a
 }
 
 describe("planStep", () => {
-  test("plans buy-sell in word-pair order", () => {
-    const pool = poolWithQueue(["cozy-prefix", "cozy-suffix", "love-prefix", "love-suffix"], "buy-sell");
+  test("plans buy-sell in prefix lane, then suffix lane order", () => {
+    const pool = poolWithQueue(["cozy-prefix", "love-prefix", "cozy-suffix", "love-suffix"], "buy-sell");
 
     expect(Array.from({ length: 8 }, (_, cursor) => planStep(pool, cursor))).toEqual([
       { idx: 0, action: "buy" },

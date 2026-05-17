@@ -84,7 +84,15 @@ function flatToWordQueue(queue: { walletName: string }[], wallets: WalletInfo[])
 }
 
 function wordQueueToFiringFlat(wq: WordStep[]): { walletName: string }[] {
-  return wq.flatMap((w) => w.walletNames.map((name) => ({ walletName: name })));
+  const laneCount = Math.max(0, ...wq.map((w) => w.walletNames.length));
+  const queue: { walletName: string }[] = [];
+  for (let lane = 0; lane < laneCount; lane++) {
+    for (const word of wq) {
+      const walletName = word.walletNames[lane];
+      if (walletName) queue.push({ walletName });
+    }
+  }
+  return queue;
 }
 
 function fireCount(action: SequencerAction, flatSteps: { walletName: string }[]): number {
@@ -95,16 +103,17 @@ function plannedStep(action: SequencerAction, flatSteps: { walletName: string }[
   if (action === "sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "sell" };
   if (action !== "buy-sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "buy" };
   let n = i % (flatSteps.length * 2);
-  for (let start = 0; start < flatSteps.length; start += 2) {
-    const pairLen = Math.min(2, flatSteps.length - start);
-    const pairCycle = pairLen * 2;
-    if (n < pairCycle) {
+  const laneLen = Math.ceil(flatSteps.length / 2);
+  for (let start = 0; start < flatSteps.length; start += laneLen) {
+    const blockLen = Math.min(laneLen, flatSteps.length - start);
+    const blockCycle = blockLen * 2;
+    if (n < blockCycle) {
       return {
-        walletName: flatSteps[start + (n % pairLen)]?.walletName ?? "",
-        action: n < pairLen ? "buy" : "sell",
+        walletName: flatSteps[start + (n % blockLen)]?.walletName ?? "",
+        action: n < blockLen ? "buy" : "sell",
       };
     }
-    n -= pairCycle;
+    n -= blockCycle;
   }
   return { walletName: "", action: "buy" };
 }
