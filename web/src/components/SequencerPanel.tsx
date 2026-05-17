@@ -449,7 +449,7 @@ export function SequencerPanel({
   const canFire = !dirty && (balancesReady || (armed && lowBalanceNames.length === 0)) && wordQueue.length > 0 && !anyBusy;
   const canCleanup = !!controlWallet && !anyBusy;
   const canCheck = neededBalanceNames.length > 0 && !anyBusy;
-  const barReady = !dirty && (balancesReady || (armed && lowBalanceNames.length === 0));
+  const barReady = wordQueue.length > 0 && !dirty && (balancesReady || (armed && lowBalanceNames.length === 0));
   const barLive = firingAll;
   const barCleanup = cleaning;
   const controlBalance = controlWallet ? solBalances[controlWallet] : null;
