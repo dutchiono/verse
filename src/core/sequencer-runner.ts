@@ -445,18 +445,18 @@ function buildIndices(len: number, mode: string): number[] {
   return mode === "shuffle" ? shuffle(idx) : idx;
 }
 export function planStep(pool: Pick<PoolConfig, "sequencer">, cursor: number): { idx: number; action: "buy" | "sell" } {
-  const len = pool.sequencer.queue.length;
+  const queue = pool.sequencer.queue;
+  const len = queue.length;
   const action = pool.sequencer.action;
   if (action === "sell") return { idx: cursor % len, action: "sell" };
   if (action === "buy-sell") {
     let n = cursor % (len * 2);
-    const laneLen = Math.ceil(len / 2);
-    for (let start = 0; start < len; start += laneLen) {
-      const blockLen = Math.min(laneLen, len - start);
+    for (const block of laneBlocks(queue)) {
+      const blockLen = block.length;
       const blockCycle = blockLen * 2;
       if (n < blockCycle) {
         return {
-          idx: start + (n % blockLen),
+          idx: block[n % blockLen]!,
           action: n < blockLen ? "buy" : "sell",
         };
       }
@@ -465,6 +465,22 @@ export function planStep(pool: Pick<PoolConfig, "sequencer">, cursor: number): {
   }
   return { idx: cursor % len, action: "buy" };
 }
+
+function laneBlocks(queue: readonly { walletName: string }[]): number[][] {
+  const prefix: number[] = [];
+  const suffix: number[] = [];
+  for (const [idx, step] of queue.entries()) {
+    if (isSuffixWalletName(step.walletName)) suffix.push(idx);
+    else prefix.push(idx);
+  }
+  return [prefix, suffix].filter((block) => block.length > 0);
+}
+
+function isSuffixWalletName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.includes("-suffix-") || n.endsWith("-suffix") || /-s\d*$/.test(n);
+}
+
 function randBetween(min: number, max: number): number { return min + Math.random() * (max - min); }
 function shuffle<T>(a: T[]): T[] {
   const r = [...a];

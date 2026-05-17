@@ -103,19 +103,33 @@ function plannedStep(action: SequencerAction, flatSteps: { walletName: string }[
   if (action === "sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "sell" };
   if (action !== "buy-sell") return { walletName: flatSteps[i]?.walletName ?? "", action: "buy" };
   let n = i % (flatSteps.length * 2);
-  const laneLen = Math.ceil(flatSteps.length / 2);
-  for (let start = 0; start < flatSteps.length; start += laneLen) {
-    const blockLen = Math.min(laneLen, flatSteps.length - start);
+  for (const block of laneBlocks(flatSteps)) {
+    const blockLen = block.length;
     const blockCycle = blockLen * 2;
     if (n < blockCycle) {
       return {
-        walletName: flatSteps[start + (n % blockLen)]?.walletName ?? "",
+        walletName: flatSteps[block[n % blockLen]!]?.walletName ?? "",
         action: n < blockLen ? "buy" : "sell",
       };
     }
     n -= blockCycle;
   }
   return { walletName: "", action: "buy" };
+}
+
+function laneBlocks(queue: readonly { walletName: string }[]): number[][] {
+  const prefix: number[] = [];
+  const suffix: number[] = [];
+  for (const [idx, step] of queue.entries()) {
+    if (isSuffixWalletName(step.walletName)) suffix.push(idx);
+    else prefix.push(idx);
+  }
+  return [prefix, suffix].filter((block) => block.length > 0);
+}
+
+function isSuffixWalletName(name: string): boolean {
+  const n = name.toLowerCase();
+  return n.includes("-suffix-") || n.endsWith("-suffix") || /-s\d*$/.test(n);
 }
 
 function buildPlannedTimeline(action: SequencerAction, flatSteps: { walletName: string }[]): Array<{ walletName: string; action: "buy" | "sell" }> {
