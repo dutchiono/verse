@@ -22,7 +22,7 @@ import type { AffixKind } from "../core/wallets.ts";
 import type { TokenInfoClient } from "../core/token-info.ts";
 import { getDbcPoolPrice } from "../core/meteora-client.ts";
 import { detectPoolType } from "../core/pool-detect.ts";
-import type { ArmProgressEvent, SequencerRunner, StepEvent, StepErrorEvent } from "../core/sequencer-runner.ts";
+import type { ArmProgressEvent, CleanupProgressEvent, SequencerRunner, StepEvent, StepErrorEvent } from "../core/sequencer-runner.ts";
 import { users, type UserRole } from "../core/users-store.ts";
 
 const log = makeLogger("server");
@@ -679,6 +679,9 @@ async function route(req: Request, url: URL, ctx: Context): Promise<Response | u
           pool,
           session.listPublic().map((w) => w.name),
           body.controlWalletName,
+          (event: CleanupProgressEvent) => {
+            ctx.broadcast({ type: "sequencer-cleanup-progress", poolId: id, ...event });
+          },
         );
         return json({ ok: true, results });
       } catch (e) {

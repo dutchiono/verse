@@ -193,6 +193,9 @@ export function App() {
     } else if (msg.type === "sequencer-arm-progress") {
       setWalletStatus(msg.walletName, msg.status);
       if (msg.balanceLamports !== undefined) setWalletSolBalance(msg.walletName, msg.balanceLamports);
+    } else if (msg.type === "sequencer-cleanup-progress") {
+      setWalletStatus(msg.walletName, msg.status === "cleaning" ? "cleaning" : msg.status === "error" ? "error" : "idle");
+      if (msg.balanceLamports !== undefined) setWalletSolBalance(msg.walletName, msg.balanceLamports);
     } else if (msg.type === "wallet-balance-progress") {
       setWalletStatus(msg.walletName, msg.status);
       if (msg.balanceLamports !== undefined) setWalletSolBalance(msg.walletName, msg.balanceLamports);

@@ -146,6 +146,31 @@ function fmtSolLamports(lamports: number | null | undefined): string {
   if (lamports == null) return "—";
   return `${(lamports / 1e9).toFixed(4)}`;
 }
+function fmtSolShort(lamports: number | null | undefined): string {
+  if (lamports == null) return "—";
+  return (lamports / 1e9).toFixed(3);
+}
+
+const BUY_FEE_BUFFER_LAMPORTS = 100_000;
+
+function requiredBuyLamports(
+  action: SequencerAction,
+  plannedTimeline: Array<{ walletName: string; action: "buy" | "sell" }>,
+  solAmount: number,
+): Record<string, number> {
+  if (action === "sell") return {};
+  const lamportsPerBuy = Math.floor(solAmount * 1e9) + BUY_FEE_BUFFER_LAMPORTS;
+  const req: Record<string, number> = {};
+  for (const step of plannedTimeline) {
+    if (step.action !== "buy" || !step.walletName) continue;
+    req[step.walletName] = (req[step.walletName] ?? 0) + lamportsPerBuy;
+  }
+  return req;
+}
+
+function balancesCoverRequirements(balances: Record<string, number | null>, requirements: Record<string, number>): boolean {
+  return Object.entries(requirements).every(([name, needed]) => (balances[name] ?? -1) >= needed);
+}
 
 let _uid = 0;
 function uid() { return String(++_uid); }
@@ -185,6 +210,7 @@ export function SequencerPanel({
   const [sequenceBusy, setSequenceBusy] = useState(false);
   const draggingIdx = useRef<number | null>(null);
   const fireInFlightRef = useRef(false);
+  const autoBalanceKeyRef = useRef("");
 
   // Load a saved sequence
   useEffect(() => {
@@ -268,8 +294,8 @@ export function SequencerPanel({
     finally { setBusy(false); }
   }
 
-  async function checkRosterBalances() {
-    const names = [...new Set(balanceCheckWallets.map((w) => w.name))];
+  async function checkRosterBalances(namesOverride?: string[], reason: "auto" | "manual" | "post-fire" = "manual") {
+    const names = [...new Set((namesOverride ?? balanceCheckWallets.map((w) => w.name)).filter(Boolean))];
     if (names.length === 0) return;
     setChecking(true); setErr(null);
     for (const name of names) onWalletStatus?.(name, "checking");
@@ -277,7 +303,7 @@ export function SequencerPanel({
       const r = await api.checkWalletBalances(names);
       onSolBalances?.(r.balances);
       const known = Object.values(r.balances).filter((v) => v !== null).length;
-      onLog?.(`check ✓ ${known}/${names.length} wallet balance(s) loaded`, "ok");
+      onLog?.(`${reason === "auto" ? "auto-check" : reason === "post-fire" ? "post-fire check" : "check"} ✓ ${known}/${names.length} wallet balance(s) loaded`, "ok");
     } catch (e) {
       setErr((e as Error).message);
       for (const name of names) onWalletStatus?.(name, "error");
@@ -296,15 +322,19 @@ export function SequencerPanel({
       setArmed(r.allReady);
       setCompletedFireCount(0);
       for (const res of r.results) onWalletStatus?.(res.walletName, res.ok ? "armed" : "error");
-      onSolBalances?.(Object.fromEntries(
+      const balanceUpdates: Record<string, number | null> = Object.fromEntries(
         r.results
           .filter((res) => res.ok && res.balanceLamports !== undefined)
           .map((res) => [res.walletName, res.balanceLamports!]),
-      ));
+      );
+      const totalAdded = r.results.reduce((sum, x) => sum + (x.lamports ?? 0), 0);
+      if (controlWallet && solBalances[controlWallet] != null) {
+        balanceUpdates[controlWallet] = Math.max(0, solBalances[controlWallet]! - totalAdded);
+      }
+      onSolBalances?.(balanceUpdates);
       if (r.allReady) {
         const ready = r.results.filter((x) => x.ok).length;
         const toppedUp = r.results.filter((x) => (x.lamports ?? 0) > 0).length;
-        const totalAdded = r.results.reduce((sum, x) => sum + (x.lamports ?? 0), 0);
         onLog?.(`ARM ✓ ${ready} wallet(s) ready · topped up ${toppedUp} · added ${(totalAdded / 1e9).toFixed(4)} SOL`, "ok");
       }
       else onLog?.("ARM incomplete — check errors", "warn");
@@ -319,12 +349,14 @@ export function SequencerPanel({
   async function fireSentence() {
     if (fireInFlightRef.current) return;
     const steps = wordQueueToFiringFlat(wordQueue);
-    if (steps.length === 0 || !armed) return;
+    if (steps.length === 0 || !canFire) return;
     fireInFlightRef.current = true;
     setFiringAll(true); setErr(null); setSigs([]);
     setCompletedFireCount(0);
     try { await api.sequencerReset(pool.id); } catch { /* ignore */ }
     const newSigs: string[] = [];
+    const estimatedBalances = { ...solBalances };
+    let failed = false;
     const total = fireCount(action, steps);
     for (let i = 0; i < total; i++) {
       setFiringStep(i);
@@ -336,8 +368,14 @@ export function SequencerPanel({
         newSigs.push(result.signature);
         setCompletedFireCount(i + 1);
         onWalletStatus?.(walletName, "done");
+        if (planned.action === "buy") {
+          const spent = Math.floor(solAmount * 1e9) + BUY_FEE_BUFFER_LAMPORTS;
+          estimatedBalances[walletName] = Math.max(0, (estimatedBalances[walletName] ?? 0) - spent);
+          onSolBalances?.({ [walletName]: estimatedBalances[walletName] });
+        }
         onLog?.(`▶ ${planned.action} ${walletName} · ${result.signature.slice(0, 8)}…`, "ok");
       } catch (e) {
+        failed = true;
         const msg = (e as Error).message;
         onWalletStatus?.(walletName, "error");
         setErr(`step ${i + 1} failed: ${msg}`);
@@ -348,7 +386,8 @@ export function SequencerPanel({
     setSigs(newSigs);
     setFiringStep(null);
     setFiringAll(false);
-    setArmed(false); // require re-arm before firing again
+    setArmed(!failed && balancesCoverRequirements(estimatedBalances, buyRequirements));
+    if (!failed) void checkRosterBalances(neededBalanceNames, "post-fire");
     fireInFlightRef.current = false;
   }
 
@@ -366,6 +405,9 @@ export function SequencerPanel({
           .map((res) => [res.walletName, res.balanceLamports ?? 0]),
       ));
       const total = r.results.reduce((s, x) => s + (x.lamports ?? 0), 0);
+      if (controlWallet && solBalances[controlWallet] != null) {
+        onSolBalances?.({ [controlWallet]: solBalances[controlWallet]! + total });
+      }
       onLog?.(`cleanup ✓ recovered ${(total / 1e9).toFixed(4)} SOL`, "ok");
     } catch (e) {
       setErr((e as Error).message);
@@ -393,15 +435,57 @@ export function SequencerPanel({
 
   const anyBusy = firingAll || arming || cleaning || checking || busy;
   const flatSteps = wordQueueToFiringFlat(wordQueue);
+  const sequenceWalletNames = [...new Set(flatSteps.map((s) => s.walletName).filter(Boolean))];
+  const neededBalanceNames = [...new Set([...(controlWallet ? [controlWallet] : []), ...sequenceWalletNames])];
   const plannedTimeline = buildPlannedTimeline(action, flatSteps);
+  const buyRequirements = requiredBuyLamports(action, plannedTimeline, solAmount);
+  const missingBalanceNames = Object.keys(buyRequirements).filter((name) => solBalances[name] == null);
+  const lowBalanceNames = Object.entries(buyRequirements)
+    .filter(([name, needed]) => solBalances[name] != null && solBalances[name]! < needed)
+    .map(([name]) => name);
+  const balancesReady = Object.keys(buyRequirements).length === 0 || balancesCoverRequirements(solBalances, buyRequirements);
   const sentence = wordQueue.map((w) => w.label).join(" ");
   const canArm = !!controlWallet && wordQueue.length > 0 && !anyBusy;
-  const canFire = armed && wordQueue.length > 0 && !anyBusy;
+  const canFire = !dirty && (balancesReady || (armed && lowBalanceNames.length === 0)) && wordQueue.length > 0 && !anyBusy;
   const canCleanup = !!controlWallet && !anyBusy;
-  const canCheck = balanceCheckWallets.length > 0 && !anyBusy;
-  const barReady = armed && !dirty;
+  const canCheck = neededBalanceNames.length > 0 && !anyBusy;
+  const barReady = !dirty && (balancesReady || (armed && lowBalanceNames.length === 0));
   const barLive = firingAll;
   const barCleanup = cleaning;
+  const controlBalance = controlWallet ? solBalances[controlWallet] : null;
+  const activeCheckingName = neededBalanceNames.find((name) => walletStatuses[name] === "checking");
+  const activeArmingName = sequenceWalletNames.find((name) => walletStatuses[name] === "arming");
+  const activeCleaningName = sequenceWalletNames.find((name) => walletStatuses[name] === "cleaning");
+  const activeCheckIndex = activeCheckingName ? neededBalanceNames.indexOf(activeCheckingName) + 1 : 0;
+  const activeArmIndex = activeArmingName ? sequenceWalletNames.indexOf(activeArmingName) + 1 : 0;
+  const activeCleanIndex = activeCleaningName ? sequenceWalletNames.indexOf(activeCleaningName) + 1 : 0;
+  const currentPlanned = firingStep !== null ? plannedStep(action, flatSteps, firingStep) : null;
+  const statusText = firingAll && currentPlanned
+    ? `${currentPlanned.action === "buy" ? "buying token with" : "selling token from"} ${currentPlanned.walletName} (${(firingStep ?? 0) + 1}/${fireCount(action, flatSteps)})`
+    : checking && activeCheckingName
+      ? `checking ${activeCheckingName} (${activeCheckIndex}/${neededBalanceNames.length})`
+      : arming && activeArmingName
+        ? `arming ${activeArmingName} with SOL (${activeArmIndex}/${sequenceWalletNames.length})`
+        : cleaning && activeCleaningName
+          ? `cleaning ${activeCleaningName} (${activeCleanIndex}/${sequenceWalletNames.length})`
+          : dirty
+            ? "sequence changed — arm or save before firing"
+            : lowBalanceNames.length > 0
+              ? `low SOL: ${lowBalanceNames.slice(0, 2).join(", ")}${lowBalanceNames.length > 2 ? "…" : ""}`
+              : missingBalanceNames.length > 0
+                ? `waiting on SOL check for ${missingBalanceNames.length} wallet(s)`
+                : barReady
+                  ? "ready to fire"
+                  : "build and arm a sentence";
+
+  useEffect(() => {
+    if (isVisitor || neededBalanceNames.length === 0) return;
+    const key = `${pool.id}:${controlWallet}:${neededBalanceNames.join("|")}:${solAmount}`;
+    if (autoBalanceKeyRef.current === key) return;
+    autoBalanceKeyRef.current = key;
+    const t = setTimeout(() => void checkRosterBalances(neededBalanceNames, "auto"), 800);
+    return () => clearTimeout(t);
+  }, [isVisitor, pool.id, controlWallet, neededBalanceNames.join("|"), solAmount]);
 
   return (
     <div className="sequencer-panel">
@@ -411,10 +495,10 @@ export function SequencerPanel({
         <button
           className="seq-check-btn"
           disabled={isVisitor || !canCheck}
-          title={isVisitor ? "sign in to use" : "slow sequential SOL balance check for visible roster wallets"}
-          onClick={() => void checkRosterBalances()}
+          title={isVisitor ? "sign in to use" : "slow sequential SOL balance refresh for the controller and current sentence wallets"}
+          onClick={() => void checkRosterBalances(neededBalanceNames, "manual")}
         >
-          {checking ? "checking…" : "Check SOL"}
+          {checking ? "checking…" : "Refresh SOL"}
         </button>
 
         <button
@@ -429,7 +513,7 @@ export function SequencerPanel({
         <button
           className={`seq-fire-btn ${firingAll ? "firing" : ""}`}
           disabled={isVisitor || !canFire}
-          title={isVisitor ? "sign in to use" : !armed ? "arm the current sentence first" : undefined}
+          title={isVisitor ? "sign in to use" : dirty ? "sequence changed — arm first" : lowBalanceNames.length > 0 ? "low wallet SOL — arm first" : missingBalanceNames.length > 0 ? "waiting for balance check" : undefined}
           onClick={() => void fireSentence()}
         >
           {firingAll ? `${firingStep !== null ? firingStep + 1 : "…"} / ${fireCount(action, flatSteps)}` : "Fire"}
@@ -446,6 +530,11 @@ export function SequencerPanel({
 
         <div className="seq-arm-spacer" />
 
+        <div className="seq-live-status">
+          <span className={`seq-live-dot ${barLive || checking || arming || cleaning ? "live" : barReady ? "ready" : ""}`} />
+          <span className="seq-live-text">{statusText}</span>
+        </div>
+
         <div className="seq-bar-lights">
           <BarLight label="ready" state={barReady ? "on" : "off"} />
           <BarLight label="fire" state={barLive ? "live" : "off"} />
@@ -454,6 +543,10 @@ export function SequencerPanel({
 
         <span className="seq-target-tag small mono" title={pool.token_mint}>
           <span className="muted">target</span> {pool.name} · {short(pool.token_mint)}
+        </span>
+
+        <span className="seq-balance-pill small mono" title={controlWallet ? `controller wallet ${controlWallet}` : "no controller wallet"}>
+          <span className="muted">ctrl</span> {controlWallet || "—"} · {fmtSolShort(controlBalance)} SOL
         </span>
 
         <div className="seq-action-toggle">

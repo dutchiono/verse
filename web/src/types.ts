@@ -206,6 +206,18 @@ export interface SequencerRunCompleteEvent {
   type: "sequencer-run-complete";
   poolId: string;
 }
+export interface SequencerCleanupProgressEvent {
+  type: "sequencer-cleanup-progress";
+  poolId: string;
+  walletName: string;
+  status: "cleaning" | "cleaned" | "skipped" | "error";
+  sig?: string;
+  tokenSellSig?: string;
+  tokenRawAmount?: string;
+  lamports?: number;
+  balanceLamports?: number;
+  error?: string;
+}
 export interface WalletBalanceProgressEvent {
   type: "wallet-balance-progress";
   walletName: string;
@@ -219,4 +231,4 @@ export type ServerEvent =
   | PoolUpdateEvent | WatchStartEvent | WatchStopEvent
   | HelloEvent | SessionChangeEvent | PoolsChangeEvent
   | SequencerChangeEvent | SequencerStepEvent | SequencerStepErrorEvent
-  | SequencerArmProgressEvent | SequencerRunCompleteEvent | WalletBalanceProgressEvent | SequencesChangeEvent;
+  | SequencerArmProgressEvent | SequencerCleanupProgressEvent | SequencerRunCompleteEvent | WalletBalanceProgressEvent | SequencesChangeEvent;

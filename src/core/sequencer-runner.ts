@@ -34,6 +34,16 @@ export interface CleanupStepResult {
   skipped?: boolean; // balance already at floor
   error?: string;
 }
+export interface CleanupProgressEvent {
+  walletName: string;
+  status: "cleaning" | "cleaned" | "skipped" | "error";
+  sig?: string;
+  tokenSellSig?: string;
+  tokenRawAmount?: string;
+  lamports?: number;
+  balanceLamports?: number;
+  error?: string;
+}
 
 const log = makeLogger("sequencer");
 const ARM_SOL_PER_WALLET = 0.03;
@@ -339,7 +349,12 @@ export class SequencerRunner extends EventEmitter {
    * CLEANUP: drain all available SOL from every known wallet back to the control wallet.
    * Empty wallets are tolerated and returned as skipped.
    */
-  async cleanup(pool: PoolConfig, walletNames: string[], controlWalletName: string): Promise<CleanupStepResult[]> {
+  async cleanup(
+    pool: PoolConfig,
+    walletNames: string[],
+    controlWalletName: string,
+    onProgress?: (event: CleanupProgressEvent) => void,
+  ): Promise<CleanupStepResult[]> {
     const controlKp = this.getAnyKeypair(controlWalletName) ?? this.getKeypair(controlWalletName);
     if (!controlKp) throw new Error(`control wallet "${controlWalletName}" not loaded`);
 
@@ -355,13 +370,16 @@ export class SequencerRunner extends EventEmitter {
       const walletKp = this.getAnyKeypair(walletName) ?? this.getKeypair(walletName);
       if (!walletKp) {
         results.push({ walletName, ok: false, error: "wallet not loaded" });
+        onProgress?.({ walletName, status: "error", error: "wallet not loaded" });
         continue;
       }
       try {
+        onProgress?.({ walletName, status: "cleaning" });
         let currentLamports = await getBalanceWithRateLimitRetry(this.conn, walletKp.publicKey);
         if (currentLamports <= 0) {
           results.push({ walletName, ok: true, lamports: 0, balanceLamports: currentLamports, skipped: true });
           log.info("cleanup: skipped", { from: walletName, balanceLamports: currentLamports });
+          onProgress?.({ walletName, status: "skipped", lamports: 0, balanceLamports: currentLamports });
           continue;
         }
 
@@ -419,15 +437,18 @@ export class SequencerRunner extends EventEmitter {
             skipped: true,
           });
           log.info("cleanup: skipped", { from: walletName, balanceLamports });
+          onProgress?.({ walletName, status: "skipped", tokenSellSig, tokenRawAmount, lamports: 0, balanceLamports: balanceLamports ?? undefined });
         } else {
           const balanceLamports = await this.conn.getBalance(walletKp.publicKey, "confirmed").catch(() => KEEP_LAMPORTS);
           results.push({ walletName, ok: true, sig: r.sig, tokenSellSig, tokenRawAmount, lamports: r.lamports, balanceLamports });
           log.info("cleanup: drained", { from: walletName, tokenSold: Boolean(tokenSellSig), lamports: r.lamports, balanceLamports });
+          onProgress?.({ walletName, status: "cleaned", sig: r.sig, tokenSellSig, tokenRawAmount, lamports: r.lamports, balanceLamports });
         }
       } catch (e) {
         const error = (e as Error).message;
         results.push({ walletName, ok: false, error });
         log.warn("cleanup: wallet failed", { from: walletName, error });
+        onProgress?.({ walletName, status: "error", error });
       } finally {
         if (shouldThrottle) {
           const waitMs = CLEANUP_WALLET_INTERVAL_MS - (Date.now() - startedAt);
