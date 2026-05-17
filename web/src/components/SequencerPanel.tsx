@@ -132,6 +132,20 @@ function isSuffixWalletName(name: string): boolean {
   return n.includes("-suffix-") || n.endsWith("-suffix") || /-s\d*$/.test(n);
 }
 
+type AffixFilter = "both" | "prefix-only" | "suffix-only";
+
+function filterWordsByAffix(wq: WordStep[], filter: AffixFilter): WordStep[] {
+  if (filter === "both") return wq;
+  return wq
+    .map((step) => ({
+      ...step,
+      walletNames: step.walletNames.filter((name) =>
+        filter === "prefix-only" ? !isSuffixWalletName(name) : isSuffixWalletName(name),
+      ),
+    }))
+    .filter((step) => step.walletNames.length > 0);
+}
+
 function buildPlannedTimeline(action: SequencerAction, flatSteps: { walletName: string }[]): Array<{ walletName: string; action: "buy" | "sell" }> {
   return Array.from({ length: fireCount(action, flatSteps) }, (_, i) => plannedStep(action, flatSteps, i));
 }
@@ -205,9 +219,13 @@ export function SequencerPanel({
   const [firingStep, setFiringStep] = useState<number | null>(null);
   const [completedFireCount, setCompletedFireCount] = useState(0);
   const [err, setErr] = useState<string | null>(null);
-  const [sigs, setSigs] = useState<string[]>([]);
   const [sequenceName, setSequenceName] = useState("");
   const [sequenceBusy, setSequenceBusy] = useState(false);
+  const [affixFilter, setAffixFilter] = useState<AffixFilter>("both");
+  const [showFireConfirm, setShowFireConfirm] = useState(false);
+  const [localLog, setLocalLog] = useState<Array<{ id: number; text: string; level: string }>>([]);
+  const [showGuide, setShowGuide] = useState(false);
+  const logIdRef = useRef(0);
   const draggingIdx = useRef<number | null>(null);
   const fireInFlightRef = useRef(false);
   const autoBalanceKeyRef = useRef("");
@@ -237,6 +255,14 @@ export function SequencerPanel({
   });
   const wordMap = buildWordMap(available);
 
+  function logLocal(text: string, level: string = "info") {
+    onLog?.(text, level as "info" | "warn" | "ok");
+    setLocalLog((prev) => {
+      const entry = { id: ++logIdRef.current, text, level };
+      return prev.length >= 20 ? [...prev.slice(1), entry] : [...prev, entry];
+    });
+  }
+
   function markDirty() {
     setDirty(true);
     setErr(null);
@@ -245,7 +271,6 @@ export function SequencerPanel({
   }
   function resetArm() {
     setArmed(false);
-    setSigs([]);
     setCompletedFireCount(0);
   }
 
@@ -303,7 +328,7 @@ export function SequencerPanel({
       const r = await api.checkWalletBalances(names);
       onSolBalances?.(r.balances);
       const known = Object.values(r.balances).filter((v) => v !== null).length;
-      onLog?.(`${reason === "auto" ? "auto-check" : reason === "post-fire" ? "post-fire check" : "check"} ✓ ${known}/${names.length} wallet balance(s) loaded`, "ok");
+      if (reason !== "auto") logLocal(`balances refreshed — ${known}/${names.length} wallets`, "ok");
     } catch (e) {
       setErr((e as Error).message);
       for (const name of names) onWalletStatus?.(name, "error");
@@ -314,8 +339,8 @@ export function SequencerPanel({
     if (!controlWallet || wordQueue.length === 0) return;
     // Save first so the queue is committed to the pool
     if (dirty) await save();
-    setArming(true); setErr(null); setArmed(false); setSigs([]);
-    const allNames = wordQueueToFiringFlat(wordQueue).map((s) => s.walletName);
+    setArming(true); setErr(null); setArmed(false);
+    const allNames = flatSteps.map((s) => s.walletName);
     for (const name of allNames) onWalletStatus?.(name, "idle");
     try {
       const r = await api.sequencerArm(pool.id, controlWallet);
@@ -335,29 +360,37 @@ export function SequencerPanel({
       if (r.allReady) {
         const ready = r.results.filter((x) => x.ok).length;
         const toppedUp = r.results.filter((x) => (x.lamports ?? 0) > 0).length;
-        onLog?.(`ARM ✓ ${ready} wallet(s) ready · topped up ${toppedUp} · added ${(totalAdded / 1e9).toFixed(4)} SOL`, "ok");
+        logLocal(`ARM ✓ ${ready} wallet${ready !== 1 ? "s" : ""} ready · topped up ${toppedUp} · +${(totalAdded / 1e9).toFixed(4)} SOL`, "ok");
+      } else {
+        logLocal("ARM incomplete — some wallets failed", "warn");
       }
-      else onLog?.("ARM incomplete — check errors", "warn");
     } catch (e) {
       const msg = (e as Error).message;
       setErr(msg);
-      onLog?.(`ARM blocked: ${msg}`, "warn");
+      logLocal(`ARM blocked: ${msg}`, "warn");
       for (const name of allNames) onWalletStatus?.(name, "error");
     } finally { setArming(false); }
   }
 
+  function handleFireClick() {
+    if (!canFire) return;
+    setShowFireConfirm(true);
+  }
+
   async function fireSentence() {
+    setShowFireConfirm(false);
     if (fireInFlightRef.current) return;
-    const steps = wordQueueToFiringFlat(wordQueue);
+    const steps = flatSteps; // respects affixFilter
     if (steps.length === 0 || !canFire) return;
     fireInFlightRef.current = true;
-    setFiringAll(true); setErr(null); setSigs([]);
+    setFiringAll(true); setErr(null);
     setCompletedFireCount(0);
     try { await api.sequencerReset(pool.id); } catch { /* ignore */ }
-    const newSigs: string[] = [];
+    const firedSigs: string[] = [];
     const estimatedBalances = { ...solBalances };
     let failed = false;
     const total = fireCount(action, steps);
+    logLocal(`firing ${total} step${total !== 1 ? "s" : ""} on ${pool.name}…`);
     for (let i = 0; i < total; i++) {
       setFiringStep(i);
       const planned = plannedStep(action, steps, i);
@@ -365,7 +398,7 @@ export function SequencerPanel({
       onWalletStatus?.(walletName, "firing");
       try {
         const result = await api.sequencerFire(pool.id);
-        newSigs.push(result.signature);
+        firedSigs.push(result.signature);
         setCompletedFireCount(i + 1);
         onWalletStatus?.(walletName, "done");
         if (planned.action === "buy") {
@@ -373,21 +406,26 @@ export function SequencerPanel({
           estimatedBalances[walletName] = Math.max(0, (estimatedBalances[walletName] ?? 0) - spent);
           onSolBalances?.({ [walletName]: estimatedBalances[walletName] });
         }
-        onLog?.(`▶ ${planned.action} ${walletName} · ${result.signature.slice(0, 8)}…`, "ok");
+        logLocal(`${planned.action === "buy" ? "▶ buy" : "◀ sell"} ${walletName} · ${result.signature.slice(0, 8)}…`, "ok");
       } catch (e) {
         failed = true;
         const msg = (e as Error).message;
         onWalletStatus?.(walletName, "error");
         setErr(`step ${i + 1} failed: ${msg}`);
-        onLog?.(`✗ step ${i + 1} (${walletName}): ${msg}`, "warn");
+        logLocal(`✗ step ${i + 1} (${walletName}): ${msg}`, "warn");
         break;
       }
     }
-    setSigs(newSigs);
     setFiringStep(null);
     setFiringAll(false);
-    setArmed(!failed && balancesCoverRequirements(estimatedBalances, buyRequirements));
-    if (!failed) void checkRosterBalances(neededBalanceNames, "post-fire");
+    const nextArmed = !failed && balancesCoverRequirements(estimatedBalances, buyRequirements);
+    setArmed(nextArmed);
+    // Reset lights to armed state so re-fire is clear
+    setCompletedFireCount(0);
+    if (!failed) {
+      logLocal(`fired ${firedSigs.length}/${total} steps · refreshing balances…`, "ok");
+      void checkRosterBalances(neededBalanceNames, "post-fire");
+    }
     fireInFlightRef.current = false;
   }
 
@@ -408,9 +446,11 @@ export function SequencerPanel({
       if (controlWallet && solBalances[controlWallet] != null) {
         onSolBalances?.({ [controlWallet]: solBalances[controlWallet]! + total });
       }
-      onLog?.(`cleanup ✓ recovered ${(total / 1e9).toFixed(4)} SOL`, "ok");
+      logLocal(`cleanup ✓ recovered ${(total / 1e9).toFixed(4)} SOL → controller`, "ok");
     } catch (e) {
-      setErr((e as Error).message);
+      const msg = (e as Error).message;
+      setErr(msg);
+      logLocal(`cleanup failed: ${msg}`, "warn");
       for (const name of allNames) onWalletStatus?.(name, "error");
     } finally { setCleaning(false); }
   }
@@ -434,7 +474,7 @@ export function SequencerPanel({
   }
 
   const anyBusy = firingAll || arming || cleaning || checking || busy;
-  const flatSteps = wordQueueToFiringFlat(wordQueue);
+  const flatSteps = wordQueueToFiringFlat(filterWordsByAffix(wordQueue, affixFilter));
   const sequenceWalletNames = [...new Set(flatSteps.map((s) => s.walletName).filter(Boolean))];
   const neededBalanceNames = [...new Set([...(controlWallet ? [controlWallet] : []), ...sequenceWalletNames])];
   const plannedTimeline = buildPlannedTimeline(action, flatSteps);
@@ -445,11 +485,11 @@ export function SequencerPanel({
     .map(([name]) => name);
   const balancesReady = Object.keys(buyRequirements).length === 0 || balancesCoverRequirements(solBalances, buyRequirements);
   const sentence = wordQueue.map((w) => w.label).join(" ");
-  const canArm = !!controlWallet && wordQueue.length > 0 && !anyBusy;
-  const canFire = !dirty && (balancesReady || (armed && lowBalanceNames.length === 0)) && wordQueue.length > 0 && !anyBusy;
+  const canArm = !!controlWallet && flatSteps.length > 0 && !anyBusy;
+  const canFire = !dirty && (balancesReady || (armed && lowBalanceNames.length === 0)) && flatSteps.length > 0 && !anyBusy;
   const canCleanup = !!controlWallet && !anyBusy;
   const canCheck = neededBalanceNames.length > 0 && !anyBusy;
-  const barReady = wordQueue.length > 0 && !dirty && (balancesReady || (armed && lowBalanceNames.length === 0));
+  const barReady = flatSteps.length > 0 && !dirty && (balancesReady || (armed && lowBalanceNames.length === 0));
   const barLive = firingAll;
   const barCleanup = cleaning;
   const controlBalance = controlWallet ? solBalances[controlWallet] : null;
@@ -490,6 +530,37 @@ export function SequencerPanel({
   return (
     <div className="sequencer-panel">
 
+      {/* ── Inline guide ── */}
+      <div className="seq-guide">
+        <button className="seq-guide-toggle ghost small" onClick={() => setShowGuide((v) => !v)}>
+          {showGuide ? "▾ how it works" : "? how it works"}
+        </button>
+        {showGuide && (
+          <div className="seq-guide-body small">
+            <div className="seq-guide-step">
+              <span className="seq-guide-num">1</span>
+              <span><strong>Build a sentence</strong> — pick words below. Each word fires its prefix and/or suffix wallet.</span>
+            </div>
+            <div className="seq-guide-step">
+              <span className="seq-guide-num">2</span>
+              <span><strong>ARM</strong> — sends SOL from the controller to each wallet in the sentence. Already-funded wallets are skipped. Only tops up the deficit, so re-arming after adding words is safe.</span>
+            </div>
+            <div className="seq-guide-step">
+              <span className="seq-guide-num">3</span>
+              <span><strong>FIRE</strong> — executes buys (and sells in Buy+Sell mode) in order across all wallets. A confirmation appears so you can double-check the target before committing.</span>
+            </div>
+            <div className="seq-guide-step">
+              <span className="seq-guide-num">4</span>
+              <span><strong>CLEANUP</strong> — drains remaining SOL from all sequence wallets back to the controller. Run this after firing or if you cancel mid-sequence.</span>
+            </div>
+            <div className="seq-guide-step">
+              <span className="seq-guide-num">P/S</span>
+              <span><strong>Lanes filter</strong> — P fires only prefix wallets, S fires only suffix, P+S fires both. Does not affect what's saved — just filters what arms and fires this session.</span>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* ── Action bar: ARM · FIRE · CLEANUP  ·  Buy/Sell · SOL ── */}
       <div className="seq-arm-bar">
         <button
@@ -514,7 +585,7 @@ export function SequencerPanel({
           className={`seq-fire-btn ${firingAll ? "firing" : ""}`}
           disabled={isVisitor || !canFire}
           title={isVisitor ? "sign in to use" : dirty ? "sequence changed — arm first" : lowBalanceNames.length > 0 ? "low wallet SOL — arm first" : missingBalanceNames.length > 0 ? "waiting for balance check" : undefined}
-          onClick={() => void fireSentence()}
+          onClick={handleFireClick}
         >
           {firingAll ? `${firingStep !== null ? firingStep + 1 : "…"} / ${fireCount(action, flatSteps)}` : "Fire"}
         </button>
@@ -555,6 +626,12 @@ export function SequencerPanel({
           <button className={action === "buy-sell" ? "active" : ""} onClick={() => { setAction("buy-sell"); markDirty(); }}>Buy+Sell</button>
         </div>
 
+        <div className="seq-action-toggle" title="Which wallet lanes to arm and fire">
+          <button className={affixFilter === "prefix-only" ? "active" : ""} onClick={() => setAffixFilter("prefix-only")}>P</button>
+          <button className={affixFilter === "both" ? "active" : ""} onClick={() => setAffixFilter("both")}>P+S</button>
+          <button className={affixFilter === "suffix-only" ? "active" : ""} onClick={() => setAffixFilter("suffix-only")}>S</button>
+        </div>
+
         <label className="seq-sol-field">
           <span>SOL / buy</span>
           <input
@@ -569,14 +646,31 @@ export function SequencerPanel({
         </label>
       </div>
 
-      {/* Fired signatures */}
-      {sigs.length > 0 && (
-        <div className="seq-sigs small mono">
-          {sigs.map((s, i) => (
-            <span key={s} className="seq-sig-entry ok">
-              {i + 1}·<a href={`https://solscan.io/tx/${s}`} target="_blank" rel="noreferrer">{s.slice(0, 10)}…</a>
-            </span>
+      {/* ── Activity log ── */}
+      {(localLog.length > 0 || err) && (
+        <div className="seq-activity-log small mono">
+          {err && <div className="seq-log-entry seq-log-warn">⚠ {err}</div>}
+          {localLog.slice(-8).map((entry) => (
+            <div key={entry.id} className={`seq-log-entry seq-log-${entry.level}`}>{entry.text}</div>
           ))}
+        </div>
+      )}
+
+      {/* ── Fire confirmation modal ── */}
+      {showFireConfirm && (
+        <div className="seq-confirm-overlay">
+          <div className="seq-confirm-modal">
+            <div className="seq-confirm-title">Confirm Fire</div>
+            <div className="seq-confirm-row"><span className="seq-confirm-label">Pool</span><span className="seq-confirm-val">{pool.name}</span></div>
+            <div className="seq-confirm-row"><span className="seq-confirm-label">Token</span><span className="seq-confirm-val mono small">{pool.token_mint.slice(0, 12)}…{pool.token_mint.slice(-6)}</span></div>
+            <div className="seq-confirm-row"><span className="seq-confirm-label">Sentence</span><span className="seq-confirm-val">{sentence || "—"}</span></div>
+            <div className="seq-confirm-row"><span className="seq-confirm-label">Action</span><span className="seq-confirm-val">{action} · lanes {affixFilter === "both" ? "P+S" : affixFilter === "prefix-only" ? "P only" : "S only"}</span></div>
+            <div className="seq-confirm-row"><span className="seq-confirm-label">Steps</span><span className="seq-confirm-val">{fireCount(action, flatSteps)} · {solAmount} SOL/buy</span></div>
+            <div className="seq-confirm-actions">
+              <button className="ghost" onClick={() => setShowFireConfirm(false)}>Cancel</button>
+              <button className="seq-fire-btn" onClick={() => void fireSentence()}>🔥 Fire</button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -689,7 +783,6 @@ export function SequencerPanel({
         </button>
       </div>
 
-      {err && <div className="err">{err}</div>}
     </div>
   );
 }

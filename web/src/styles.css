@@ -2480,3 +2480,117 @@ button.danger:hover { background: rgba(248, 113, 113, 0.1); }
   color: var(--accent);
   line-height: 1;
 }
+
+/* ===== Sequencer guide ===== */
+.seq-guide {
+  padding: 2px 0 6px;
+}
+.seq-guide-toggle {
+  font-size: 11px;
+  color: var(--muted);
+  padding: 2px 4px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  letter-spacing: 0.3px;
+}
+.seq-guide-toggle:hover { color: var(--text); }
+.seq-guide-body {
+  margin-top: 6px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.seq-guide-step {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.5;
+}
+.seq-guide-num {
+  min-width: 22px;
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 11px;
+  padding-top: 1px;
+}
+
+/* ===== Activity log ===== */
+.seq-activity-log {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 10px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  max-height: 130px;
+  overflow-y: auto;
+  font-size: 11px;
+}
+.seq-log-entry {
+  line-height: 1.5;
+  color: var(--muted);
+}
+.seq-log-ok { color: var(--accent); }
+.seq-log-warn { color: #f59e0b; }
+.seq-log-info { color: var(--muted); }
+
+/* ===== Fire confirm modal ===== */
+.seq-confirm-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.65);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.seq-confirm-modal {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px 24px;
+  min-width: 320px;
+  max-width: 420px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+}
+.seq-confirm-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.seq-confirm-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 12px;
+}
+.seq-confirm-label {
+  min-width: 68px;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+.seq-confirm-val {
+  color: var(--text);
+  word-break: break-all;
+}
+.seq-confirm-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+
